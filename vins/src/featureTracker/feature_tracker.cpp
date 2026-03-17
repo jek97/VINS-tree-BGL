@@ -670,7 +670,7 @@ void FeatureTracker::evaluate_fd(ObservedForest& forest)
     }
 }
 
-vector<Ex_TreeNode> FeatureTracker::subtree(const ObservedTree& tree, const string& node_id)
+ObservedTree FeatureTracker::subtree(const ObservedTree& tree, const string& node_id)
 {
     using VD = boost::graph_traits<ObservedTree>::vertex_descriptor;
 
@@ -681,27 +681,38 @@ vector<Ex_TreeNode> FeatureTracker::subtree(const ObservedTree& tree, const stri
 
     if (root_it == vs_end) {
         std::cerr << "Warning featuretracker subtree: ex_id '" << node_id << "' not found.\n";
-        return {};
+        return ObservedTree{};
     }
     const VD root_vd = *root_it;
 
-    // BFS via BGL out_edges — O(V+E), no string maps or sentinel checks needed.
-    // The root itself is excluded (matches original behaviour).
-    vector<Ex_TreeNode> result;
+    ObservedTree sub;
+    std::unordered_map<VD, VD> vd_map; // source VD -> sub VD (excludes root)
+
+    // BFS: collect all descendants, add as vertices to sub.
+    // Root itself is excluded (matches original behaviour).
     std::queue<VD> q;
     q.push(root_vd);
-
     while (!q.empty()) {
         VD cur = q.front(); q.pop();
         if (cur != root_vd)
-            result.push_back(tree[cur]);
+            vd_map[cur] = boost::add_vertex(tree[cur], sub);
         for (auto e : boost::make_iterator_range(boost::out_edges(cur, tree)))
             q.push(boost::target(e, tree));
     }
-    return result;
+
+    // Add edges between descendant vertices (edges from root to its direct
+    // children are excluded because root is not in vd_map).
+    for (const auto& [src_vd, sub_src] : vd_map) {
+        for (auto e : boost::make_iterator_range(boost::out_edges(src_vd, tree))) {
+            auto jt = vd_map.find(boost::target(e, tree));
+            if (jt != vd_map.end())
+                boost::add_edge(sub_src, jt->second, sub);
+        }
+    }
+    return sub;
 }
 
-vector<Ex_TreeNode> FeatureTracker::extended_subtree(const ObservedTree& tree, const string& node_id)
+ObservedTree FeatureTracker::extended_subtree(const ObservedTree& tree, const string& node_id)
 {
     using VD = boost::graph_traits<ObservedTree>::vertex_descriptor;
 
@@ -717,12 +728,12 @@ vector<Ex_TreeNode> FeatureTracker::extended_subtree(const ObservedTree& tree, c
     if (components.size() <= 1)
         return subtree(tree, node_id);
 
-    // Multi-component case: normal subtree + all nodes from other components.
-    vector<Ex_TreeNode> sub_node = subtree(tree, node_id);
+    // Multi-component: normal subtree + isolated vertices from other components.
+    ObservedTree sub = subtree(tree, node_id);
     for (auto v : boost::make_iterator_range(boost::vertices(tree)))
         if (tree[v].component != node_component)
-            sub_node.push_back(tree[v]);
-    return sub_node;
+            boost::add_vertex(tree[v], sub);
+    return sub;
 }
 
 
@@ -737,26 +748,32 @@ int FeatureTracker::hammingDistance(const std::vector<uint8_t>& fd_brief1, const
     return distance;
 }
 
-pair<vector<vector<double>>, vector<vector<double>>> FeatureTracker::tree_bipartite_capacity_cost_evaluation(vector<Ex_TreeNode> graph_L, vector<Ex_TreeNode> graph_R)
-{   
-    // create cost matrix and capacity matrix, given cost[i][j] = cost edge connecting node i to node j, NOTE node i, j = 0 = source , node i, j = last = sink 
-    vector<vector<double>> cost_mat(graph_L.size() + graph_R.size() + 2, std::vector<double>(graph_L.size() + graph_R.size() + 2, 0.0));
-    vector<vector<double>> capacity_mat(graph_L.size() + graph_R.size() + 2, std::vector<double>(graph_L.size() + graph_R.size() + 2, 0.0)); // first and last elements are source and sink
-   
+pair<vector<vector<double>>, vector<vector<double>>> FeatureTracker::tree_bipartite_capacity_cost_evaluation(const ObservedTree& graph_L, const ObservedTree& graph_R)
+{
+    using VD = boost::graph_traits<ObservedTree>::vertex_descriptor;
+    std::vector<VD> verts_L, verts_R;
+    for (auto v : boost::make_iterator_range(boost::vertices(graph_L))) verts_L.push_back(v);
+    for (auto v : boost::make_iterator_range(boost::vertices(graph_R))) verts_R.push_back(v);
+
+    const int nL = static_cast<int>(verts_L.size());
+    const int nR = static_cast<int>(verts_R.size());
+
+    // create cost matrix and capacity matrix, given cost[i][j] = cost edge connecting node i to node j, NOTE node i, j = 0 = source , node i, j = last = sink
+    vector<vector<double>> cost_mat(nL + nR + 2, std::vector<double>(nL + nR + 2, 0.0));
+    vector<vector<double>> capacity_mat(nL + nR + 2, std::vector<double>(nL + nR + 2, 0.0)); // first and last elements are source and sink
+
     // capacity matrix: all zeroes except for the edges connecting the L nodes (graph_L) to the R nodes (graph_R), the edges connecting source to the L nodes (graph_L) and the edges connecting the R nodes (graph_R) to sink
     // cost matrix: all zeroes except for the edges connecting the L nodes (graph_L) to the R nodes (graph_R)
-    for(int i = 0; i < graph_L.size(); ++i)
-    {   
-        for(int j = 0; j < graph_R.size(); ++j)
-        {   
-            // cost matrix
-            // extract point position
-            Eigen::Vector3d p_0(graph_L[i].x, graph_L[i].y, graph_L[i].z); 
-            Eigen::Vector3d p_1(graph_R[j].x, graph_R[j].y, graph_R[j].z);
+    for(int i = 0; i < nL; ++i)
+    {
+        const ObservedNode& nl = graph_L[verts_L[i]];
+        for(int j = 0; j < nR; ++j)
+        {
+            const ObservedNode& nr = graph_R[verts_R[j]];
 
-            // extract point topological featuredescriptor
-            std::vector<uint8_t> fd_brief_0 = graph_L[i].fd_brief;
-            std::vector<uint8_t> fd_brief_1 = graph_R[j].fd_brief;
+            // extract point position
+            Eigen::Vector3d p_0(nl.x, nl.y, nl.z);
+            Eigen::Vector3d p_1(nr.x, nr.y, nr.z);
 
             // project them in the image
             Eigen::Vector3d prev_node_uv = K_mat * p_0;
@@ -769,45 +786,34 @@ pair<vector<vector<double>>, vector<vector<double>>> FeatureTracker::tree_bipart
             double dist_2d = (cur_node_2d_p - prev_node_2d_p).norm();
 
             // weight it based on the average depth of the points
-            // get their depth
             double prev_depth = p_0.norm();
             double cur_depth = p_1.norm();
 
             // get their topological feature descriptor
-            Eigen::VectorXd prev_topological_fd = Eigen::Map<const Eigen::VectorXd>(graph_L[i].fd.data(), graph_L[i].fd.size());
-            Eigen::VectorXd cur_topological_fd = Eigen::Map<const Eigen::VectorXd>(graph_R[j].fd.data(), graph_R[j].fd.size());
+            Eigen::VectorXd prev_topological_fd = Eigen::Map<const Eigen::VectorXd>(nl.fd.data(), nl.fd.size());
+            Eigen::VectorXd cur_topological_fd  = Eigen::Map<const Eigen::VectorXd>(nr.fd.data(), nr.fd.size());
 
             // evaluate distance
             double topological_distance = (cur_topological_fd - prev_topological_fd).norm();
 
             // final distance
-            // double custom_dist = (dist_2d * ((prev_depth + cur_depth) / 2)) + static_cast<double>(hammingDistance(fd_brief_0, fd_brief_1)) + topological_distance;
             double custom_dist = (dist_2d * ((prev_depth + cur_depth) / 2)) + topological_distance;
-            cost_mat[i + 1][graph_L.size() + 1 + j] = custom_dist;
-            
+            cost_mat[i + 1][nL + 1 + j] = custom_dist;
+
             // capacity matrix
-            if((p_0 - p_1).norm() <= TREE_METRIC_MATCH_THRESH) // if the position error is to hight assign 0 capacity on that edge, avoiding the match
-            {
-                capacity_mat[i + 1][graph_L.size() + 1 + j] = 1; // edges from L to R
-            }
-            else{
-                capacity_mat[i + 1][graph_L.size() + 1 + j] = 0; // edges from L to R
-            }
+            if((p_0 - p_1).norm() <= TREE_METRIC_MATCH_THRESH) // if the position error is too high assign 0 capacity on that edge, avoiding the match
+                capacity_mat[i + 1][nL + 1 + j] = 1; // edges from L to R
+            else
+                capacity_mat[i + 1][nL + 1 + j] = 0; // edges from L to R
         }
     }
-    
-    for(int i = 0; i < graph_L.size(); ++i)
-    {
-        // capacity matrix
-        capacity_mat[0][i + 1] = 1; // edges from source to L
-    }
 
-    for(int i = 0; i < graph_R.size(); ++i)
-    {
-        // capacity matrix
-        capacity_mat[graph_L.size() + 1 + i][graph_L.size() + graph_R.size() + 1] = 1; // edges from R to sink
-    }
-    
+    for(int i = 0; i < nL; ++i)
+        capacity_mat[0][i + 1] = 1; // edges from source to L
+
+    for(int i = 0; i < nR; ++i)
+        capacity_mat[nL + 1 + i][nL + nR + 1] = 1; // edges from R to sink
+
     return {capacity_mat, cost_mat};
 }
 
@@ -936,20 +942,28 @@ vector<double> FeatureTracker::BpMatcher::getMaxFlow(vector<vector<double>>& cap
     return {totalflow, totalcost};
 }
 
-vector<pair<double, pair<string, string>>> FeatureTracker::BpMatcher::get_tree_matchings(const vector<Ex_TreeNode>& graph_L, const vector<Ex_TreeNode>& graph_R)
-{   
+vector<pair<double, pair<string, string>>> FeatureTracker::BpMatcher::get_tree_matchings(const ObservedTree& graph_L, const ObservedTree& graph_R)
+{
+    using VD = boost::graph_traits<ObservedTree>::vertex_descriptor;
+    std::vector<VD> verts_L, verts_R;
+    for (auto v : boost::make_iterator_range(boost::vertices(graph_L))) verts_L.push_back(v);
+    for (auto v : boost::make_iterator_range(boost::vertices(graph_R))) verts_R.push_back(v);
+
+    const int nL = static_cast<int>(verts_L.size());
+    const int nR = static_cast<int>(verts_R.size());
+
     vector<pair<double, pair<string, string>>> matches; // a vector in which each element is cost of the matching, node of graph L, node of graph R
-    for(int i = 0; i < graph_L.size(); ++i) // for all the edges going from grph_L to graph_R
+    for(int i = 0; i < nL; ++i) // for all the edges going from graph_L to graph_R
     {
-        for(int j = 0; j < graph_R.size(); ++j)
+        for(int j = 0; j < nR; ++j)
         {
-            if (flow[i + 1][graph_L.size() + 1 + j] > 0) // if you have flow in the solution, meaning we have a matching between the twwo nodes
+            if (flow[i + 1][nL + 1 + j] > 0) // if you have flow in the solution, meaning we have a matching between the two nodes
             {
-                matches.push_back(make_pair(cost[i + 1][graph_L.size() + 1 + j], make_pair(graph_L[i].ex_id, graph_R[j].ex_id)));
+                matches.push_back(make_pair(cost[i + 1][nL + 1 + j], make_pair(graph_L[verts_L[i]].ex_id, graph_R[verts_R[j]].ex_id)));
             }
         }
     }
-    
+
     return matches;
 }
 
@@ -1012,47 +1026,34 @@ void FeatureTracker::removeNode(string node, vector<Ex_TreeNode>& graph)
     }
 }
 
-// TODO: implement removeNode for ObservedTree — options discussed with user:
-//
-//  Option A  boost::clear_vertex + boost::remove_vertex
-//    clear_vertex(v, g) removes all in/out edges of v, then remove_vertex(v, g)
-//    deletes the vertex. With vecS vertex container this INVALIDATES all vertex
-//    descriptors ≥ v (they are renumbered). Callers that hold VDs after this
-//    call will silently reference the wrong node — dangerous inside a recursive
-//    match() loop that holds iterators into the same graph.
-//
-//  Option B  listS vertex container instead of vecS
-//    Changing ObservedTree to use listS means remove_vertex() is O(1) and
-//    descriptors/iterators remain stable. Downside: vertex property access
-//    becomes g[vd] with a list-based descriptor (a pointer/iterator) rather
-//    than a plain integer; topological_sort and index-based maps need an
-//    explicit vertex_index_map.
-//
-//  Option C  "lazy" removal — mark vertex as deleted, filter on use
-//    Keep vecS but add a bool `removed` flag to ObservedNode. Wrap the graph
-//    in boost::filtered_graph<ObservedTree, ...> when iterating. No
-//    invalidation, no descriptor renumbering. Extra memory proportional to
-//    deleted nodes; filtering has a small per-iteration cost.
-//
-//  Option D  Work on a flat vector copy inside match() (current approach)
-//    sub_0/sub_1 are already vector<Ex_TreeNode> copies. The graph itself
-//    (graph_0/1) does not strictly need removeNode — only the local sub
-//    vectors need pruning. We could drop removeNode(ObservedTree&) entirely
-//    and only keep removeNode(string, vector<Ex_TreeNode>&).
-//    This is the safest migration step before a deeper redesign.
-void FeatureTracker::removeNode(const string& /*node*/, ObservedTree& /*graph*/)
+// removeNode for ObservedTree — implemented via Option A:
+//   clear_vertex() strips all incident edges, then remove_vertex() deletes the
+//   vertex. With vecS all descriptors >= v are renumbered after remove_vertex.
+//   This is safe here because every subsequent lookup is done by ex_id string
+//   (via std::find_if), never by a cached vertex_descriptor. The O(V) scan cost
+//   per removal is acceptable given the small tree sizes involved.
+void FeatureTracker::removeNode(const string& node_id, ObservedTree& graph)
 {
-    // TODO: choose option above and implement (deferred).
+    using VD = boost::graph_traits<ObservedTree>::vertex_descriptor;
+
+    auto [vs_begin, vs_end] = boost::vertices(graph);
+    auto it = std::find_if(vs_begin, vs_end,
+        [&](VD v){ return graph[v].ex_id == node_id; });
+
+    if (it == vs_end) return;
+
+    const VD v = *it;
+    boost::clear_vertex(v, graph);   // remove all incident edges first
+    boost::remove_vertex(v, graph);  // then remove the vertex (renumbers VDs >= v)
 }
 
 void FeatureTracker::match(string node_0, string node_1, ObservedTree& graph_0, ObservedTree& graph_1, vector<pair<double, pair<string, string>>>& final_matches)
 {   
     // get the subtree rooted at node_0 in graph_0 and at node_1 in graph_1
-    vector<Ex_TreeNode> sub_0, sub_1;
-    sub_0 = subtree(graph_0, node_0);
-    sub_1 = subtree(graph_1, node_1);
+    ObservedTree sub_0 = subtree(graph_0, node_0);
+    ObservedTree sub_1 = subtree(graph_1, node_1);
 
-    while(!sub_0.empty() && !sub_1.empty())
+    while(boost::num_vertices(sub_0) > 0 && boost::num_vertices(sub_1) > 0)
     {   
         // evaluate capacity and cost matrix for minimum cost maximum cardinality bipartite matching
         auto [capacity, cost] = tree_bipartite_capacity_cost_evaluation(sub_0, sub_1);

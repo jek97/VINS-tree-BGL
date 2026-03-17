@@ -73,9 +73,9 @@ public:
     int hammingDistance(const std::vector<uint8_t>& fd_brief1, const std::vector<uint8_t>& fd_brief2);
     pair<double, vector<pair<pair<string, string>, double>>> isomorphism(ObservedTree tree_0, ObservedTree tree_1);
     void match(string node_0, string node_1, ObservedTree& graph_0, ObservedTree& graph_1, vector<pair<double, pair<string, string>>>& final_matches);
-    vector<Ex_TreeNode> subtree(const ObservedTree& tree, const string& node_id);
-    vector<Ex_TreeNode> extended_subtree(const ObservedTree& tree, const string& node_id);
-    pair<vector<vector<double>>, vector<vector<double>>> tree_bipartite_capacity_cost_evaluation(vector<Ex_TreeNode> graph_L, vector<Ex_TreeNode> graph_R);
+    ObservedTree subtree(const ObservedTree& tree, const string& node_id);
+    ObservedTree extended_subtree(const ObservedTree& tree, const string& node_id);
+    pair<vector<vector<double>>, vector<vector<double>>> tree_bipartite_capacity_cost_evaluation(const ObservedTree& graph_L, const ObservedTree& graph_R);
     class BpMatcher
     {
         public:
@@ -83,7 +83,7 @@ public:
             
             bool search(int src, int sink);
             vector<double> getMaxFlow(vector<vector<double>>& capacity_mat, vector<vector<double>>& cost_mat, int src, int sink);
-            vector<pair<double, pair<string, string>>> get_tree_matchings(const vector<Ex_TreeNode>& graph_L, const vector<Ex_TreeNode>& graph_R);
+            vector<pair<double, pair<string, string>>> get_tree_matchings(const ObservedTree& graph_L, const ObservedTree& graph_R);
             vector<pair<int, vector<pair<pair<string, string>, double>>>> get_forest_matchings(const vector<vector<pair<double, vector<pair<pair<string, string>, double>>>>>& tree_matches);
         
             int N = 0; // Stores the number of nodes
