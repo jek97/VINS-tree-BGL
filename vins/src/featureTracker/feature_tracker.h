@@ -69,7 +69,7 @@ public:
     FeatureTracker();
     map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> trackImage(double _cur_time, const cv::Mat &_img, const cv::Mat &_img1 = cv::Mat());
     pair<double, vector<TreeNode>> trackForest(double _cur_time, vector<vector<Ex_TreeNode>> &cur_forest);
-    void evaluate_fd( vector<vector<Ex_TreeNode>> &forest);
+    void evaluate_fd(ObservedForest &forest);
     int hammingDistance(const std::vector<uint8_t>& fd_brief1, const std::vector<uint8_t>& fd_brief2);
     pair<double, vector<pair<pair<string, string>, double>>> isomorphism(vector<Ex_TreeNode> tree_0, vector<Ex_TreeNode> tree_1);
     void match(string node_0, string node_1, vector<Ex_TreeNode>& graph_0, vector<Ex_TreeNode>& graph_1, vector<pair<double, pair<string, string>>>& final_matches);

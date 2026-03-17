@@ -10,6 +10,7 @@
  *******************************************************/
 
 #include "feature_tracker.h"
+#include <boost/graph/topological_sort.hpp>
 
 bool FeatureTracker::inBorder(const cv::Point2f &pt)
 {
@@ -569,126 +570,104 @@ cv::Mat FeatureTracker::drawForest(const vector<vector<Ex_TreeNode>> &forest, co
     return img;
 }
 
-void FeatureTracker::evaluate_fd(vector<vector<Ex_TreeNode>> &forest)
-{   
-    for (auto& tree : forest) {
-        // Build a map from ex_id to pointer
-        std::unordered_map<std::string, Ex_TreeNode*> ex_id_map;
-        std::unordered_map<std::string, std::vector<std::string>> child_map;
-        std::unordered_map<std::string, std::string> parent_map;
+void FeatureTracker::evaluate_fd(ObservedForest& forest)
+{
+    using VD = boost::graph_traits<ObservedTree>::vertex_descriptor;
 
-        for (auto& node : tree) {
-            ex_id_map[node.ex_id] = &node;
-            node.extended_sons.clear();
-            node.fd.clear();
-            for (const std::string& son : node.ex_sons) {
-                if(son != "tip")
+    for (auto& tree : forest)
+    {
+        const auto nv = boost::num_vertices(tree);
+        if (nv == 0) continue;
+
+        // boost::topological_sort with back_inserter outputs vertices in DFS
+        // finish order: sinks (tips) are finished first, source (root) last.
+        // This gives the exact bottom-up order we need without sentinel tricks.
+        std::vector<VD> order;
+        order.reserve(nv);
+        boost::topological_sort(tree, std::back_inserter(order));
+
+        // desc[v] = all descendant vertex descriptors of v, filled bottom-up.
+        // With vecS, VD is size_t so plain vector indexing is valid.
+        std::vector<std::vector<VD>> desc(nv);
+
+        for (VD v : order)
+        {
+            auto& nd = tree[v];
+            nd.fd.clear();
+
+            if (boost::out_degree(v, tree) == 0)
+            {
+                // Tip: no children, no branching structure → zero descriptor.
+                nd.fd.assign(TP_FD_LENGHT, 0.0);
+                continue;   // desc[v] stays empty
+            }
+
+            std::vector<double> fd;
+            fd.reserve(boost::out_degree(v, tree));
+
+            for (auto e : boost::make_iterator_range(boost::out_edges(v, tree)))
+            {
+                const VD c = boost::target(e, tree);
+
+                // Subtree of c: {c} followed by all of c's descendants.
+                // desc[c] is already populated because c was processed earlier
+                // (topological order guarantees children before parents).
+                std::vector<VD> sub;
+                sub.reserve(1 + desc[c].size());
+                sub.push_back(c);
+                sub.insert(sub.end(), desc[c].begin(), desc[c].end());
+
+                const int sub_n = static_cast<int>(sub.size());
+
+                // Map vertex descriptor → adjacency-matrix row/column index.
+                std::unordered_map<VD, int> idx;
+                idx.reserve(sub_n);
+                for (int i = 0; i < sub_n; ++i)
+                    idx[sub[i]] = i;
+
+                // Build undirected adjacency matrix in O(|sub|) via BGL out-edges.
+                // The old code did this with O(n² · max_degree) nested find() calls.
+                Eigen::MatrixXd adj = Eigen::MatrixXd::Zero(sub_n, sub_n);
+                for (int i = 0; i < sub_n; ++i)
                 {
-                    child_map[node.ex_id].push_back(son);
-                    parent_map[son] = node.ex_id;
-                }
-            }
-        }
-
-        // Find tips (no children)
-        std::vector<std::string> tips;
-        for (auto& node : tree) {
-            if (child_map[node.ex_id].empty()) {
-                tips.push_back(node.ex_id);
-            }
-        }
-
-        for (const std::string& tip_id : tips) {
-            std::string current = tip_id;
-            auto& current_node = *ex_id_map[current];
-            std::string prev;
-            bool is_tip = true;
-            bool done = false;
-
-            ex_id_map[current]->fd = {-1.0}; // Mark as processed
-
-            while (!done) {
-                auto& current_node = *ex_id_map[current];
-                
-                if (!is_tip) {
-                    // Use prev to update current_node
-                    const auto& child_succ = ex_id_map[prev]->extended_sons;
-                    std::vector<std::string> ex_succ = {prev};
-                    ex_succ.insert(ex_succ.end(), child_succ.begin(), child_succ.end());
-
-                    current_node.extended_sons.insert(current_node.extended_sons.end(), ex_succ.begin(), ex_succ.end());
-
-                } else {
-                    is_tip = false;
-                }
-
-                // Check for unexplored successors
-                bool has_unexplored = false;
-                for (const std::string& succ : child_map[current]) {
-                    if (ex_id_map[succ]->fd.empty()) {
-                        has_unexplored = true;
-                        break;
-                    }
-                }
-                
-                if (has_unexplored) break;
-
-                // Compute feature descriptor
-                std::vector<double> fd;
-                for (const std::string& child_id : child_map[current]) {
-                    auto& child_node = *ex_id_map[child_id];
-                    std::vector<std::string> subtree = child_node.extended_sons;
-                    subtree.push_back(child_id);
-
-                    int n = subtree.size();
-                    Eigen::MatrixXd adj = Eigen::MatrixXd::Zero(n, n);
-
-                    for (int i = 0; i < n; ++i) {
-                        for (int j = 0; j < n; ++j) {
-                            const std::string& a = subtree[i];
-                            const std::string& b = subtree[j];
-
-                            if (std::find(ex_id_map[a]->ex_sons.begin(), ex_id_map[a]->ex_sons.end(), b) != ex_id_map[a]->ex_sons.end() ||
-                                std::find(ex_id_map[b]->ex_sons.begin(), ex_id_map[b]->ex_sons.end(), a) != ex_id_map[b]->ex_sons.end()) {
-                                adj(i, j) = 1.0;
-                                adj(j, i) = 1.0;
-                            }
+                    for (auto oe : boost::make_iterator_range(boost::out_edges(sub[i], tree)))
+                    {
+                        auto jt = idx.find(boost::target(oe, tree));
+                        if (jt != idx.end())
+                        {
+                            adj(i, jt->second) = 1.0;
+                            adj(jt->second, i) = 1.0;  // undirected
                         }
                     }
-
-                    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver(adj);
-                    Eigen::VectorXd eig = solver.eigenvalues();
-
-                    std::vector<double> eig_vals(eig.data(), eig.data() + eig.size());
-                    std::sort(eig_vals.begin(), eig_vals.end(), std::greater<double>());
-
-                    int d_son = child_map[child_id].size();
-                    double eig_sum = std::accumulate(eig_vals.begin(),
-                                                     eig_vals.begin() + std::min(d_son, (int)eig_vals.size()), 0.0);
-                    fd.push_back(eig_sum);
                 }
 
-                std::sort(fd.begin(), fd.end(), std::greater<double>());
-                
-                if ((int)fd.size() > TP_FD_LENGHT) {
-                    fd.resize(TP_FD_LENGHT);
-                } else if ((int)fd.size() < TP_FD_LENGHT) {
-                    fd.insert(fd.end(), TP_FD_LENGHT - fd.size(), 0.0);
-                }
-                
-                ex_id_map[current]->fd = fd;
+                // Eigendecomposition of the symmetric adjacency matrix.
+                Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver(adj);
+                const Eigen::VectorXd& eig = solver.eigenvalues();
+                std::vector<double> eig_vals(eig.data(), eig.data() + eig.size());
+                std::sort(eig_vals.begin(), eig_vals.end(), std::greater<double>());
 
-                // Move up
-                if (parent_map.find(current) == parent_map.end()) {
-                    done = true;
-                } else {
-                    prev = current;
-                    current = parent_map[current];
-                }
+                // Contribution of child c: sum of its top-k eigenvalues,
+                // where k = number of children of c (its out-degree).
+                const int k = std::min(static_cast<int>(boost::out_degree(c, tree)),
+                                       static_cast<int>(eig_vals.size()));
+                fd.push_back(std::accumulate(eig_vals.begin(), eig_vals.begin() + k, 0.0));
+            }
+
+            // Sort descending; resize() truncates if too long, pads 0 if too short.
+            std::sort(fd.begin(), fd.end(), std::greater<double>());
+            fd.resize(TP_FD_LENGHT, 0.0);
+            nd.fd = std::move(fd);
+
+            // Propagate descendants upward: desc[v] = children ∪ their descendants.
+            for (auto e : boost::make_iterator_range(boost::out_edges(v, tree)))
+            {
+                const VD c = boost::target(e, tree);
+                desc[v].push_back(c);
+                desc[v].insert(desc[v].end(), desc[c].begin(), desc[c].end());
             }
         }
     }
-    return;
 }
 
 vector<Ex_TreeNode> FeatureTracker::subtree(vector<Ex_TreeNode> tree, string node)
@@ -1316,7 +1295,8 @@ pair<double, vector<TreeNode>> FeatureTracker::trackForest(double _cur_time, vec
         K_mat = Eigen::Map<Eigen::Matrix<double, 3, 3, Eigen::RowMajor>>(K_vec.data());
     }
     
-    evaluate_fd(cur_forest); // evaluate the feature descriptor of the new forest
+    // TODO: adapt trackForest to accept ObservedForest (deferred – next refactor step).
+    // evaluate_fd(cur_forest);
     
     vector<pair<int, vector<pair<pair<string, string>, double>>>> complete_matches;
     vector<int> matches_names;
