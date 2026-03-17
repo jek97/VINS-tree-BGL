@@ -71,10 +71,10 @@ public:
     pair<double, vector<TreeNode>> trackForest(double _cur_time, vector<vector<Ex_TreeNode>> &cur_forest);
     void evaluate_fd(ObservedForest &forest);
     int hammingDistance(const std::vector<uint8_t>& fd_brief1, const std::vector<uint8_t>& fd_brief2);
-    pair<double, vector<pair<pair<string, string>, double>>> isomorphism(vector<Ex_TreeNode> tree_0, vector<Ex_TreeNode> tree_1);
-    void match(string node_0, string node_1, vector<Ex_TreeNode>& graph_0, vector<Ex_TreeNode>& graph_1, vector<pair<double, pair<string, string>>>& final_matches);
-    vector<Ex_TreeNode> subtree(vector<Ex_TreeNode> tree, string node);
-    vector<Ex_TreeNode> extended_subtree(vector<Ex_TreeNode> tree, string node);
+    pair<double, vector<pair<pair<string, string>, double>>> isomorphism(ObservedTree tree_0, ObservedTree tree_1);
+    void match(string node_0, string node_1, ObservedTree& graph_0, ObservedTree& graph_1, vector<pair<double, pair<string, string>>>& final_matches);
+    vector<Ex_TreeNode> subtree(const ObservedTree& tree, const string& node_id);
+    vector<Ex_TreeNode> extended_subtree(const ObservedTree& tree, const string& node_id);
     pair<vector<vector<double>>, vector<vector<double>>> tree_bipartite_capacity_cost_evaluation(vector<Ex_TreeNode> graph_L, vector<Ex_TreeNode> graph_R);
     class BpMatcher
     {
@@ -94,6 +94,7 @@ public:
             const double INF = INT_MAX / 2 - 1;
     };
     void removeNode(string node, vector<Ex_TreeNode>& graph);
+    void removeNode(const string& node, ObservedTree& graph); // deferred – see options in .cpp
     pair<vector<vector<double>>, vector<vector<double>>> forest_bipartite_capacity_cost_evaluation(vector<vector<pair<double, vector<pair<pair<string, string>, double>>>>> tree_matches);
     vector<pair<int, vector<pair<pair<string, string>, double>>>> remove_statistical_outliers(const vector<pair<int, vector<pair<pair<string, string>, double>>>>& complete_matches);
     void setMask();

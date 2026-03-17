@@ -670,88 +670,59 @@ void FeatureTracker::evaluate_fd(ObservedForest& forest)
     }
 }
 
-vector<Ex_TreeNode> FeatureTracker::subtree(vector<Ex_TreeNode> tree, string node)
+vector<Ex_TreeNode> FeatureTracker::subtree(const ObservedTree& tree, const string& node_id)
 {
-    // find subtree rooted at node
-    // create a map from node name and index
-    std::unordered_map<std::string, Ex_TreeNode*> ex_id_map;
+    using VD = boost::graph_traits<ObservedTree>::vertex_descriptor;
 
-    for (auto& node_ : tree) {
-        ex_id_map[node_.ex_id] = &node_;
+    // Locate the root vertex by ex_id.
+    auto [vs_begin, vs_end] = boost::vertices(tree);
+    auto root_it = std::find_if(vs_begin, vs_end,
+        [&](VD v){ return tree[v].ex_id == node_id; });
+
+    if (root_it == vs_end) {
+        std::cerr << "Warning featuretracker subtree: ex_id '" << node_id << "' not found.\n";
+        return {};
     }
-    
-    // find subtree
-    vector<Ex_TreeNode> subtree;
-    vector<string> future_candidates;
-    future_candidates.push_back(node);
+    const VD root_vd = *root_it;
 
-    size_t i = 0;
-    while (i < future_candidates.size()) {
-        const std::string& ex_id = future_candidates[i];
-        
-        auto it = ex_id_map.find(ex_id);
-        if (it != ex_id_map.end() && it->second != nullptr) {
-            Ex_TreeNode* node_ = it->second;
+    // BFS via BGL out_edges — O(V+E), no string maps or sentinel checks needed.
+    // The root itself is excluded (matches original behaviour).
+    vector<Ex_TreeNode> result;
+    std::queue<VD> q;
+    q.push(root_vd);
 
-            // Add the node (by value) to the subtree
-            if(it->first != node)
-            {
-                subtree.push_back(*node_);
-            }
-
-            // Add its sons to the future_candidates list
-            for (const std::string& son : node_->ex_sons) {
-                if(son != "tip") // Note here i may end up having an empty list of sons due to how removenodes work, but in that case the for loop whould just skip, so i don't have to protect it
-                {      
-                    future_candidates.push_back(son);
-                }
-            }
-        } else {
-            std::cerr << "Warning featuretracker subtree: ex_id '" << ex_id << "' not found in map.\n";
-        }
-
-        // Move to next candidate
-        ++i;
+    while (!q.empty()) {
+        VD cur = q.front(); q.pop();
+        if (cur != root_vd)
+            result.push_back(tree[cur]);
+        for (auto e : boost::make_iterator_range(boost::out_edges(cur, tree)))
+            q.push(boost::target(e, tree));
     }
-
-    return subtree;
+    return result;
 }
 
-vector<Ex_TreeNode> FeatureTracker::extended_subtree(vector<Ex_TreeNode> tree, string node)
-{   
-    // identify how many disconnected component are forming the tree
+vector<Ex_TreeNode> FeatureTracker::extended_subtree(const ObservedTree& tree, const string& node_id)
+{
+    using VD = boost::graph_traits<ObservedTree>::vertex_descriptor;
+
+    // Find the component of node_id and collect all distinct components.
+    int node_component = -1;
     std::set<int> components;
-    int node_component;
-    for (const auto& n : tree){
-        components.insert(n.component);
-        
-        if (n.ex_id == node) 
-        {
-            node_component = n.component; // save the node component for later use
-        }
+    for (auto v : boost::make_iterator_range(boost::vertices(tree))) {
+        components.insert(tree[v].component);
+        if (tree[v].ex_id == node_id)
+            node_component = tree[v].component;
     }
 
-    if (components.size() <= 1) // if you have only one component
-    {
-        return subtree(tree, node); // return only the subtree rooted at the given node (since there are no more disconnected component to consider)
-    }
-    else // if instead you have multiple disconnected components
-    {   
-        // get the normal subtree rooted at the node
-        vector<Ex_TreeNode> sub_node;
-        sub_node = subtree(tree, node);
+    if (components.size() <= 1)
+        return subtree(tree, node_id);
 
-        // expand it with all the nodes belonging to a different component
-        for (const auto& n : tree)
-        {
-            if (n.component != node_component)
-            {
-                sub_node.push_back(n);
-            }
-        }
-
-        return sub_node;
-    }
+    // Multi-component case: normal subtree + all nodes from other components.
+    vector<Ex_TreeNode> sub_node = subtree(tree, node_id);
+    for (auto v : boost::make_iterator_range(boost::vertices(tree)))
+        if (tree[v].component != node_component)
+            sub_node.push_back(tree[v]);
+    return sub_node;
 }
 
 
@@ -1041,7 +1012,40 @@ void FeatureTracker::removeNode(string node, vector<Ex_TreeNode>& graph)
     }
 }
 
-void FeatureTracker::match(string node_0, string node_1, vector<Ex_TreeNode>& graph_0, vector<Ex_TreeNode>& graph_1, vector<pair<double, pair<string, string>>>& final_matches)
+// TODO: implement removeNode for ObservedTree — options discussed with user:
+//
+//  Option A  boost::clear_vertex + boost::remove_vertex
+//    clear_vertex(v, g) removes all in/out edges of v, then remove_vertex(v, g)
+//    deletes the vertex. With vecS vertex container this INVALIDATES all vertex
+//    descriptors ≥ v (they are renumbered). Callers that hold VDs after this
+//    call will silently reference the wrong node — dangerous inside a recursive
+//    match() loop that holds iterators into the same graph.
+//
+//  Option B  listS vertex container instead of vecS
+//    Changing ObservedTree to use listS means remove_vertex() is O(1) and
+//    descriptors/iterators remain stable. Downside: vertex property access
+//    becomes g[vd] with a list-based descriptor (a pointer/iterator) rather
+//    than a plain integer; topological_sort and index-based maps need an
+//    explicit vertex_index_map.
+//
+//  Option C  "lazy" removal — mark vertex as deleted, filter on use
+//    Keep vecS but add a bool `removed` flag to ObservedNode. Wrap the graph
+//    in boost::filtered_graph<ObservedTree, ...> when iterating. No
+//    invalidation, no descriptor renumbering. Extra memory proportional to
+//    deleted nodes; filtering has a small per-iteration cost.
+//
+//  Option D  Work on a flat vector copy inside match() (current approach)
+//    sub_0/sub_1 are already vector<Ex_TreeNode> copies. The graph itself
+//    (graph_0/1) does not strictly need removeNode — only the local sub
+//    vectors need pruning. We could drop removeNode(ObservedTree&) entirely
+//    and only keep removeNode(string, vector<Ex_TreeNode>&).
+//    This is the safest migration step before a deeper redesign.
+void FeatureTracker::removeNode(const string& /*node*/, ObservedTree& /*graph*/)
+{
+    // TODO: choose option above and implement (deferred).
+}
+
+void FeatureTracker::match(string node_0, string node_1, ObservedTree& graph_0, ObservedTree& graph_1, vector<pair<double, pair<string, string>>>& final_matches)
 {   
     // get the subtree rooted at node_0 in graph_0 and at node_1 in graph_1
     vector<Ex_TreeNode> sub_0, sub_1;
@@ -1103,29 +1107,24 @@ void FeatureTracker::match(string node_0, string node_1, vector<Ex_TreeNode>& gr
     return;
 }
 
-pair<double, vector<pair<pair<string, string>, double>>> FeatureTracker::isomorphism(vector<Ex_TreeNode> tree_0, vector<Ex_TreeNode> tree_1)
-{   
-    vector<pair<double, pair<string, string>>> matches; // vector to save the matches
-    
-    // find the roots of the two trees and assign them as first candidates for the matching
-    string node_0, node_1;
-    
-    for(const auto& n_0 : tree_0) // for all the nodes of tree_0
-    {   
-        if(n_0.ex_parent == "root") // if the parent is saved as "root" (root node)
-        {
-            node_0 = n_0.ex_id;
-        }
-    }
-    
-    for(const auto& n_1 : tree_1) // for all the nodes of tree_1
-    {   
-        if(n_1.ex_parent == "root") // if the parent is saved as "root" (root node)
-        {
-            node_1 = n_1.ex_id;
-        }
-    }
-    
+pair<double, vector<pair<pair<string, string>, double>>> FeatureTracker::isomorphism(ObservedTree tree_0, ObservedTree tree_1)
+{
+    // Trees are passed by value (copy) so match() can mutate them freely.
+    using VD = boost::graph_traits<ObservedTree>::vertex_descriptor;
+
+    vector<pair<double, pair<string, string>>> matches;
+
+    // Find the root of each tree: the unique vertex with in_degree == 0.
+    // std::find_if over the vertex range avoids an explicit for loop and
+    // the old "ex_parent == root" string sentinel.
+    auto [vs0_begin, vs0_end] = boost::vertices(tree_0);
+    const string node_0 = tree_0[*std::find_if(vs0_begin, vs0_end,
+        [&](VD v){ return boost::in_degree(v, tree_0) == 0; })].ex_id;
+
+    auto [vs1_begin, vs1_end] = boost::vertices(tree_1);
+    const string node_1 = tree_1[*std::find_if(vs1_begin, vs1_end,
+        [&](VD v){ return boost::in_degree(v, tree_1) == 0; })].ex_id;
+
     match(node_0, node_1, tree_0, tree_1, matches);
 
 
@@ -1311,7 +1310,8 @@ pair<double, vector<TreeNode>> FeatureTracker::trackForest(double _cur_time, vec
             {
                 for(size_t j = 0; j < predict_forest_pts.size(); ++j) // for every tree in previous forest
                 {   
-                    tree_matches[i][j] = isomorphism(cur_forest[i], predict_forest_pts[j]); // evaluate largest isomorphism, obtaining nodes matchings and related cost
+                    // TODO: adapt call for ObservedForest (deferred – trackForest migration)
+                    // tree_matches[i][j] = isomorphism(cur_forest[i], predict_forest_pts[j]);
                 }
             }
 
@@ -1344,7 +1344,8 @@ pair<double, vector<TreeNode>> FeatureTracker::trackForest(double _cur_time, vec
                 {
                     for(size_t j = 0; j < prev_forest.size(); ++j) // for every tree in previous forest
                     {   
-                        tree_matches[i][j] = isomorphism(cur_forest[i], prev_forest[j]); // evaluate largest isomorphism, obtaining nodes matchings and related cost
+                        // TODO: adapt call for ObservedForest (deferred – trackForest migration)
+                        // tree_matches[i][j] = isomorphism(cur_forest[i], prev_forest[j]);
                     }
                 }
 
