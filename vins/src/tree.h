@@ -70,7 +70,7 @@ struct ObservedNode
 };
 
 using ObservedTree   = boost::adjacency_list<
-    boost::vecS, boost::vecS, boost::directedS,
+    boost::vecS, boost::vecS, boost::bidirectionalS,
     ObservedNode, boost::no_property
 >;
 using ObservedForest = std::vector<ObservedTree>;

@@ -276,17 +276,18 @@ void Estimator::logMessage(const std::string& message)
     logFile << message << std::endl;
 }
 
-void Estimator::inputForest(double t, std::pair<bool, std::vector<std::vector<Ex_TreeNode>>> &forest)
-{   
+void Estimator::inputForest(double t, std::pair<bool, ObservedForest> &forest)
+{
     input_tree_Cnt++;
     pair<bool, pair<double, vector<TreeNode>>> t_featureFrame;
     if(forest.first) // if we received a valid forest
     {
         t_featureFrame.first = true;
-        t_featureFrame.second = featureTracker.trackForest(t, forest.second); // NOTE T_lcam_tree is passed for visualization purposes
-        
-        auto [joinedImage, cam_info, match_time] = featureTracker.getTreeMatch();
-        pubTreeMatchImage(joinedImage, cam_info, match_time); // publish match image
+        // TODO: adapt trackForest to accept ObservedForest (deferred – next refactor step)
+        // t_featureFrame.second = featureTracker.trackForest(t, forest.second);
+        // auto [joinedImage, cam_info, match_time] = featureTracker.getTreeMatch();
+        // pubTreeMatchImage(joinedImage, cam_info, match_time);
+        t_featureFrame.second.first = t; // placeholder until trackForest is updated
     }
     else
     {

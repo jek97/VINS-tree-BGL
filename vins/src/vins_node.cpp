@@ -484,7 +484,7 @@ class VinsNode : public rclcpp::Node, public std::enable_shared_from_this<VinsNo
                         if(masks.empty())
                         {
                             // load empty forest
-                            std::pair<bool, std::vector<std::vector<Ex_TreeNode>>> out_forest;
+                            std::pair<bool, ObservedForest> out_forest;
                             out_forest.first = false;
                             estimator.inputForest(time, out_forest);
                             continue;
@@ -500,7 +500,7 @@ class VinsNode : public rclcpp::Node, public std::enable_shared_from_this<VinsNo
 
                         
                         // skeletonization
-                        std::vector<std::vector<Ex_TreeNode>> forest;
+                        ObservedForest forest;
                         forest = skeletonize(hclustered_masks, processed_depth_image, color_image);
                         
                         // visualize skeletons
@@ -534,16 +534,21 @@ class VinsNode : public rclcpp::Node, public std::enable_shared_from_this<VinsNo
                         std::ostringstream oss;
                         oss << "=========================================================================\nVN forest at time " << std::setprecision(15) << time << std::endl;
                         for(size_t i = 0; i < forest.size(); ++i){
-                            oss << "tree " << i << "\n--------------------------------------------------------------------------" << std::endl; 
-                            for(size_t j = 0; j < forest[i].size(); ++j){
-                                oss << "    node " << forest[i][j].ex_id << " pos " << forest[i][j].x << " " << forest[i][j].y << " " << forest[i][j].z << " parent " << forest[i][j].ex_parent << " sons ";
-                                for(const auto& s : forest[i][j].ex_sons){
-                                    oss << s << " ";
-                                }
+                            const auto& tree = forest[i];
+                            oss << "tree " << i << "\n--------------------------------------------------------------------------" << std::endl;
+                            for(auto v : boost::make_iterator_range(boost::vertices(tree))){
+                                const auto& nd = tree[v];
+                                oss << "    node " << nd.ex_id
+                                    << " pos " << nd.x << " " << nd.y << " " << nd.z;
+                                oss << " parent ";
+                                for(auto e : boost::make_iterator_range(boost::in_edges(v, tree)))
+                                    oss << tree[boost::source(e, tree)].ex_id << " ";
+                                oss << "sons ";
+                                for(auto e : boost::make_iterator_range(boost::out_edges(v, tree)))
+                                    oss << tree[boost::target(e, tree)].ex_id << " ";
                                 oss << "fd ";
-                                for(const auto& fdi : forest[i][j].fd_brief){
+                                for(const auto& fdi : nd.fd_brief)
                                     oss << static_cast<int>(fdi) << " ";
-                                }
                                 oss << std::endl;
                             }
                         }
@@ -551,7 +556,7 @@ class VinsNode : public rclcpp::Node, public std::enable_shared_from_this<VinsNo
                         ///// LOG /////
 
                         // load forest
-                        std::pair<bool, std::vector<std::vector<Ex_TreeNode>>> out_forest;
+                        std::pair<bool, ObservedForest> out_forest;
                         out_forest.first = true;
                         out_forest.second = forest;
                         estimator.inputForest(time, out_forest);
@@ -1856,103 +1861,74 @@ class VinsNode : public rclcpp::Node, public std::enable_shared_from_this<VinsNo
             return gaussianAverage;
         }
 
-        std::vector<std::vector<Ex_TreeNode>> skeleton_conversion(const std::vector<std::pair<int, std::unordered_map<cv::Point, Ex_TreeNode_Skel, PointHash>>>& forest_2d, const std::vector<cv::Mat>& tree_masks, const cv::Mat& depth_image, const cv::Mat& color_image)
-        {   
+        ObservedForest skeleton_conversion(const std::vector<std::pair<int, std::unordered_map<cv::Point, Ex_TreeNode_Skel, PointHash>>>& forest_2d, const std::vector<cv::Mat>& tree_masks, const cv::Mat& depth_image, const cv::Mat& color_image)
+        {
             // create an id lookup table
-            std::unordered_map<cv::Point, int, PointHash> ids;  // FIXED: Added PointHash
+            std::unordered_map<cv::Point, int, PointHash> ids;
             int id_i = 0;
-            for(const auto& [component_id, tree_graph] : forest_2d) 
-            {
+            for(const auto& [component_id, tree_graph] : forest_2d)
                 for(const auto& [point, node] : tree_graph)
-                {
-                    ids[point] = id_i;
-                    id_i += 1;
-                }
-            }
-            
-            // convert forest in Ex_TreeNode format
-            std::vector<std::vector<Ex_TreeNode>> forest;
-            cv::Point none(-1, -1);  // FIXED: was 'node', should be 'none'
-            
+                    ids[point] = id_i++;
+
             // extract camera info data
             double fx = ref_frame["tree_camera"].k[0];
             double fy = ref_frame["tree_camera"].k[4];
             double cx = ref_frame["tree_camera"].k[2];
             double cy = ref_frame["tree_camera"].k[5];
-            
-            for (std::size_t i = 0; i < forest_2d.size(); ++i)
-            {
-                const auto& [component_id, tree_2d] = forest_2d[i];  
 
-                // get the maximum radius inscripted in the mask and centered in the node position
+            ObservedForest forest;
+
+            for(std::size_t i = 0; i < forest_2d.size(); ++i)
+            {
+                const auto& [component_id, tree_2d] = forest_2d[i];
+
+                // get the maximum radius inscribed in the mask centred on each node
                 cv::Mat inscribed_circles;
                 cv::distanceTransform(tree_masks[i], inscribed_circles, cv::DIST_L2, 5);
 
-                std::vector<Ex_TreeNode> tree;
+                ObservedTree tree;
+                std::unordered_map<cv::Point,
+                    boost::graph_traits<ObservedTree>::vertex_descriptor,
+                    PointHash> vd_map;
+
+                // first pass: add all vertices
                 for(const auto& [point, node2d] : tree_2d)
                 {
-                    // relation sons parent
-                    Ex_TreeNode node;
-                    node.ex_id = std::to_string(ids[point]);
-                    
-                    if(node2d.ex_parent == none)
-                    {
-                        node.ex_parent = "root";
-                    }
-                    else
-                    {
-                        node.ex_parent = std::to_string(ids[node2d.ex_parent]);  // FIXED: convert int to string
-                    }
-                    
-                    if(node2d.ex_sons.size() == 0)
-                    {
-                        node.ex_sons.push_back("tip");
-                    }
-                    else
-                    {
-                        for(const auto& s2d : node2d.ex_sons)  // FIXED: was 'sd2', should be 's2d'
-                        {
-                            node.ex_sons.push_back(std::to_string(ids[s2d]));  // FIXED: convert int to string
-                        }
-                    }
-                    
-                    // component
+                    ObservedNode node;
+                    node.ex_id     = std::to_string(ids[point]);
+                    node.id        = ids[point];
                     node.component = component_id;
-                    
-                    // position
-                    // get the 3d position
-                    Eigen::Vector4d p_3d_h;
 
-                    // get the depth as the gaussian average of the points inside the mask around the 2d node point
+                    // 3-D position via depth back-projection + extrinsic transform
                     float node_depth = get_node_depth(depth_image, point, tree_masks[i], inscribed_circles);
-
-                    p_3d_h << (point.x - cx) * node_depth / fx, (point.y - cy) * node_depth / fy, node_depth, 1;
-                   
-                    // project the point in the left camera view
+                    Eigen::Vector4d p_3d_h;
+                    p_3d_h << (point.x - cx) * node_depth / fx,
+                              (point.y - cy) * node_depth / fy,
+                              node_depth, 1;
                     Eigen::Vector4d p_3dt_h = T_lcam_tree * p_3d_h;
-                    
-                    node.x = p_3dt_h[0];  
-                    node.y = p_3dt_h[1];  
+                    node.x = p_3dt_h[0];
+                    node.y = p_3dt_h[1];
                     node.z = p_3dt_h[2];
-                    
-                    // visual fd
-                    node.fd_brief = evaluate_visual_fd(color_image, point);
-                    
-                    // track count
+
+                    node.fd_brief  = evaluate_visual_fd(color_image, point);
                     node.track_cnt = 1;
-                    
-                    tree.push_back(node);
+
+                    vd_map[point] = boost::add_vertex(node, tree);
                 }
-                if(tree.size() > 0)
-                {
-                    forest.push_back(tree);
-                }
+
+                // second pass: add directed edges (parent -> child)
+                for(const auto& [point, node2d] : tree_2d)
+                    for(const auto& s2d : node2d.ex_sons)
+                        boost::add_edge(vd_map[point], vd_map[s2d], tree);
+
+                if(boost::num_vertices(tree) > 0)
+                    forest.push_back(std::move(tree));
             }
             return forest;
         }
 
-        std::vector<std::vector<Ex_TreeNode>> skeletonize(const std::vector<cv::Mat>& masks, const cv::Mat& depth_image, const cv::Mat& color_image)
-        {   
+        ObservedForest skeletonize(const std::vector<cv::Mat>& masks, const cv::Mat& depth_image, const cv::Mat& color_image)
+        {
             std::vector<std::pair<int, std::unordered_map<cv::Point, Ex_TreeNode_Skel, PointHash>>> forest_2d;
             std::vector<cv::Mat> tree_masks;
             std::vector<cv::Mat> img_skeletons;
@@ -2009,15 +1985,14 @@ class VinsNode : public rclcpp::Node, public std::enable_shared_from_this<VinsNo
                 
             }
             
-            // convert in 3d forest of type Ex_TreeNode
-            std::vector<std::vector<Ex_TreeNode>> forest = skeleton_conversion(forest_2d, tree_masks, depth_image, color_image);
+            // convert to ObservedForest
+            ObservedForest forest = skeleton_conversion(forest_2d, tree_masks, depth_image, color_image);
 
-            
             return forest;
         }
 
-        cv::Mat draw_forest(const cv::Mat& color_image, const std::vector<cv::Mat>& masks, const std::vector<std::vector<Ex_TreeNode>>& forest)
-        {   
+        cv::Mat draw_forest(const cv::Mat& color_image, const std::vector<cv::Mat>& masks, const ObservedForest& forest)
+        {
             // use the color image in grey scale as background
             cv::Mat gray_image;
             cv::cvtColor(color_image, gray_image, cv::COLOR_BGR2GRAY);
@@ -2127,80 +2102,34 @@ class VinsNode : public rclcpp::Node, public std::enable_shared_from_this<VinsNo
 
             for(size_t i = 0; i < forest.size(); i++)
             {
+                const auto& tree = forest[i];
+
+                // helper: project an ObservedNode to image coordinates
+                auto project = [&](const ObservedNode& nd) -> cv::Point {
+                    Eigen::Vector4d p_h;
+                    p_h << nd.x, nd.y, nd.z, 1;
+                    Eigen::Vector4d pt_h = T_tree_lcam * p_h;
+                    Eigen::Vector3d p_uvs = k * pt_h.block<3, 1>(0, 0);
+                    return cv::Point(static_cast<int>(p_uvs[0] / p_uvs[2]),
+                                     static_cast<int>(p_uvs[1] / p_uvs[2]));
+                };
+
                 // draw edge segments
-                for (const auto& node : forest[i])
-                {   
-                    // evaluate the point position in the image 
-                    // get the 3d position
-                    Eigen::Vector4d p_3d_h;
-                    p_3d_h << node.x, node.y, node.z, 1;
-                                        
-                    // project the point in the tree view
-                    Eigen::Vector4d p_3dt_h = T_tree_lcam * p_3d_h;
-                    Eigen::Vector3d p_3dt = p_3dt_h.block<3, 1>(0, 0);
-                    
-                    // project in the image plane
-                    Eigen::Vector3d p_uvs = k * p_3dt;
-                    Eigen::Vector2d p_img;
-                    p_img << p_uvs[0] / p_uvs[2], p_uvs[1] / p_uvs[2];
+                for (auto v : boost::make_iterator_range(boost::vertices(tree)))
+                {
+                    cv::Point p_img_cv = project(tree[v]);
 
-                    // convert point in cv format
-                    cv::Point p_img_cv(static_cast<int>(p_img.x()), static_cast<int>(p_img.y()));
-
-                    // draw also the edge to the sons nodes
-                    for (const auto& son : node.ex_sons) // given the sons
-                    { 
-                        // find the son in the vector
-                        auto it = std::find_if(forest[i].begin(), forest[i].end(), 
-                        [&son](const Ex_TreeNode& n) { return n.ex_id == son; });
-
-                        if (it != forest[i].end()) // If a matching node is found
-                        {  
-                            // evaluate the point position in the image 
-                            // get the 3d position
-                            Eigen::Vector4d p_3d_h_son;
-                            p_3d_h_son << it->x, it->y, it->z, 1;
-
-                            // project the point in the tree view
-                            Eigen::Vector4d p_3dt_h_son = T_tree_lcam * p_3d_h_son;
-                            Eigen::Vector3d p_3dt_son = p_3dt_h_son.block<3, 1>(0, 0);
-                            
-                            // project in the image plane
-                            Eigen::Vector3d p_uvs_son = k * p_3dt_son;
-                            Eigen::Vector2d p_img_son;
-                            p_img_son << p_uvs_son[0] / p_uvs_son[2], p_uvs_son[1] / p_uvs_son[2];
-
-                            // convert point in cv format
-                            cv::Point p_img_cv_son(static_cast<int>(p_img_son.x()), static_cast<int>(p_img_son.y()));
-
-                            // draw a line for the son
-                            cv::line(result, p_img_cv, p_img_cv_son, opposite_colors[i], 2, cv::LINE_8);
-                        }
+                    for (auto e : boost::make_iterator_range(boost::out_edges(v, tree)))
+                    {
+                        auto son_v = boost::target(e, tree);
+                        cv::Point p_img_cv_son = project(tree[son_v]);
+                        cv::line(result, p_img_cv, p_img_cv_son, opposite_colors[i], 2, cv::LINE_8);
                     }
-                } 
-                // draw node dots
-                for (const auto& node : forest[i])
-                {   
-                    // evaluate the point position in the image 
-                    // get the 3d position
-                    Eigen::Vector4d p_3d_h;
-                    p_3d_h << node.x, node.y, node.z, 1;
-                                        
-                    // project the point in the tree view
-                    Eigen::Vector4d p_3dt_h = T_tree_lcam * p_3d_h;
-                    Eigen::Vector3d p_3dt = p_3dt_h.block<3, 1>(0, 0);
-                    
-                    // project in the image plane
-                    Eigen::Vector3d p_uvs = k * p_3dt;
-                    Eigen::Vector2d p_img;
-                    p_img << p_uvs[0] / p_uvs[2], p_uvs[1] / p_uvs[2];
-
-                    // convert point in cv format
-                    cv::Point p_img_cv(static_cast<int>(p_img.x()), static_cast<int>(p_img.y()));
-                    
-                    // draw a circle for the node
-                    cv::circle(result, p_img_cv, 3, dark_opposite_colors[i], -1);
                 }
+
+                // draw node dots
+                for (auto v : boost::make_iterator_range(boost::vertices(tree)))
+                    cv::circle(result, project(tree[v]), 3, dark_opposite_colors[i], -1);
             }
             
             return result;
