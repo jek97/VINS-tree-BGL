@@ -750,13 +750,9 @@ int FeatureTracker::hammingDistance(const std::vector<uint8_t>& fd_brief1, const
 
 pair<vector<vector<double>>, vector<vector<double>>> FeatureTracker::tree_bipartite_capacity_cost_evaluation(const ObservedTree& graph_L, const ObservedTree& graph_R)
 {
-    using VD = boost::graph_traits<ObservedTree>::vertex_descriptor;
-    std::vector<VD> verts_L, verts_R;
-    for (auto v : boost::make_iterator_range(boost::vertices(graph_L))) verts_L.push_back(v);
-    for (auto v : boost::make_iterator_range(boost::vertices(graph_R))) verts_R.push_back(v);
-
-    const int nL = static_cast<int>(verts_L.size());
-    const int nR = static_cast<int>(verts_R.size());
+    // vecS vertex container guarantees VDs are consecutive 0..N-1, so graph[i] == vertex i directly.
+    const int nL = static_cast<int>(boost::num_vertices(graph_L));
+    const int nR = static_cast<int>(boost::num_vertices(graph_R));
 
     // create cost matrix and capacity matrix, given cost[i][j] = cost edge connecting node i to node j, NOTE node i, j = 0 = source , node i, j = last = sink
     vector<vector<double>> cost_mat(nL + nR + 2, std::vector<double>(nL + nR + 2, 0.0));
@@ -766,10 +762,10 @@ pair<vector<vector<double>>, vector<vector<double>>> FeatureTracker::tree_bipart
     // cost matrix: all zeroes except for the edges connecting the L nodes (graph_L) to the R nodes (graph_R)
     for(int i = 0; i < nL; ++i)
     {
-        const ObservedNode& nl = graph_L[verts_L[i]];
+        const ObservedNode& nl = graph_L[i];
         for(int j = 0; j < nR; ++j)
         {
-            const ObservedNode& nr = graph_R[verts_R[j]];
+            const ObservedNode& nr = graph_R[j];
 
             // extract point position
             Eigen::Vector3d p_0(nl.x, nl.y, nl.z);
@@ -944,13 +940,9 @@ vector<double> FeatureTracker::BpMatcher::getMaxFlow(vector<vector<double>>& cap
 
 vector<pair<double, pair<string, string>>> FeatureTracker::BpMatcher::get_tree_matchings(const ObservedTree& graph_L, const ObservedTree& graph_R)
 {
-    using VD = boost::graph_traits<ObservedTree>::vertex_descriptor;
-    std::vector<VD> verts_L, verts_R;
-    for (auto v : boost::make_iterator_range(boost::vertices(graph_L))) verts_L.push_back(v);
-    for (auto v : boost::make_iterator_range(boost::vertices(graph_R))) verts_R.push_back(v);
-
-    const int nL = static_cast<int>(verts_L.size());
-    const int nR = static_cast<int>(verts_R.size());
+    // vecS: VDs are 0..N-1, direct integer access.
+    const int nL = static_cast<int>(boost::num_vertices(graph_L));
+    const int nR = static_cast<int>(boost::num_vertices(graph_R));
 
     vector<pair<double, pair<string, string>>> matches; // a vector in which each element is cost of the matching, node of graph L, node of graph R
     for(int i = 0; i < nL; ++i) // for all the edges going from graph_L to graph_R
@@ -959,7 +951,7 @@ vector<pair<double, pair<string, string>>> FeatureTracker::BpMatcher::get_tree_m
         {
             if (flow[i + 1][nL + 1 + j] > 0) // if you have flow in the solution, meaning we have a matching between the two nodes
             {
-                matches.push_back(make_pair(cost[i + 1][nL + 1 + j], make_pair(graph_L[verts_L[i]].ex_id, graph_R[verts_R[j]].ex_id)));
+                matches.push_back(make_pair(cost[i + 1][nL + 1 + j], make_pair(graph_L[i].ex_id, graph_R[j].ex_id)));
             }
         }
     }
