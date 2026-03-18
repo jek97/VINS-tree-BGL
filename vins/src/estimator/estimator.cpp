@@ -279,15 +279,13 @@ void Estimator::logMessage(const std::string& message)
 void Estimator::inputForest(double t, std::pair<bool, ObservedForest> &forest)
 {
     input_tree_Cnt++;
-    pair<bool, pair<double, vector<TreeNode>>> t_featureFrame;
+    pair<bool, pair<double, vector<pair<int, ObservedTree>>>> t_featureFrame;
     if(forest.first) // if we received a valid forest
     {
         t_featureFrame.first = true;
-        // TODO: adapt trackForest to accept ObservedForest (deferred – next refactor step)
-        // t_featureFrame.second = featureTracker.trackForest(t, forest.second);
-        // auto [joinedImage, cam_info, match_time] = featureTracker.getTreeMatch();
-        // pubTreeMatchImage(joinedImage, cam_info, match_time);
-        t_featureFrame.second.first = t; // placeholder until trackForest is updated
+        t_featureFrame.second = featureTracker.trackForest(t, forest.second);
+        auto [joinedImage, cam_info, match_time] = featureTracker.getTreeMatch();
+        pubTreeMatchImage(joinedImage, cam_info, match_time);
     }
     else
     {
@@ -417,12 +415,17 @@ void Estimator::processMeasurements()
                     curTime = feature.first + td; // get the first element of the feature (its time)
 
                     // extract tree features
-                    pair<double, vector<TreeNode>> t_feature = tree_featureBuf.front().second; // get the first feature in the buffer
+                    pair<double, vector<pair<int, ObservedTree>>> t_feature = tree_featureBuf.front().second;
                     ///// LOG /////
                     std::ostringstream oss;
                     oss << "=========================================================================\nE pm forest at time " << std::setprecision(15) << curTime << std::endl;
-                    for(size_t i = 0; i < t_feature.second.size(); ++i){
-                        oss << "    node " << t_feature.second[i].id << " pos " << t_feature.second[i].x << " " << t_feature.second[i].y << " " << t_feature.second[i].z << " normal " << t_feature.second[i].n_x << " " << t_feature.second[i].n_y << " " << t_feature.second[i].n_z << " track cnt " << t_feature.second[i].track_cnt << std::endl;
+                    for (size_t i = 0; i < t_feature.second.size(); ++i) {
+                        const ObservedTree& tree = t_feature.second[i].second;
+                        oss << "  tree " << i << " (prev_idx=" << t_feature.second[i].first << ")\n";
+                        for (int v = 0; v < (int)boost::num_vertices(tree); ++v) {
+                            const ObservedNode& n = tree[v];
+                            oss << "    node " << n.id << " pos " << n.x << " " << n.y << " " << n.z << " track cnt " << n.track_cnt << "\n";
+                        }
                     }
                     logMessage(oss.str());
                     ///// LOG /////
@@ -920,7 +923,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
     }  
 }
 
-void Estimator::processImage_tree(const double header, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const pair<double, vector<TreeNode>> &tree)
+void Estimator::processImage_tree(const double header, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const pair<double, vector<pair<int, ObservedTree>>> &tree)
 {   
          
     ROS_DEBUG("new tree and image coming ------------------------------------------");

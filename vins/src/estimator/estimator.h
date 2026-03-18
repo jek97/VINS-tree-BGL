@@ -61,7 +61,7 @@ class Estimator
     void inputForest(double t, std::pair<bool, ObservedForest> &forest);
     void processIMU(double t, double dt, const Vector3d &linear_acceleration, const Vector3d &angular_velocity);
     void processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const double header);
-    void processImage_tree(const double header, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const pair<double, vector<TreeNode>> &tree);
+    void processImage_tree(const double header, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const pair<double, vector<pair<int, ObservedTree>>> &tree);
     void processMeasurements();
     void changeSensorType(int use_imu, int use_stereo);
 
@@ -192,7 +192,7 @@ class Estimator
     bool initFirstPoseFlag;
     bool initThreadFlag;
 
-    queue<pair<bool, pair<double, vector<TreeNode>>>> tree_featureBuf;
+    queue<pair<bool, pair<double, vector<pair<int, ObservedTree>>>>> tree_featureBuf;
     int input_tree_Cnt;
 
     // DEBUG JUMPS
