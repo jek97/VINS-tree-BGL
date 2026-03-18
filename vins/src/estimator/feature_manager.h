@@ -182,7 +182,7 @@ class FeatureManager
     int getFeatureCount();
     int get_tree_FeatureCount();
     bool addFeatureCheckParallax(int frame_count, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, double td);
-    bool addFeatureTreeCheckParallax(int frame_count, const double header, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const pair<double, vector<TreeNode>> &tree, double td);
+    bool addFeatureTreeCheckParallax(int frame_count, const double header, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const pair<double, vector<pair<int, ObservedTree>>> &tree, double td);
     vector<pair<Vector3d, Vector3d>> getCorresponding(int frame_count_l, int frame_count_r);
     //void updateDepth(const VectorXd &x);
     void setDepth(const VectorXd &x);

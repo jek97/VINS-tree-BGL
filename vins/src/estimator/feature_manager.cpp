@@ -94,7 +94,7 @@ void FeatureManager::logMessage(const std::string& message)
     logFile << message << std::endl;
 }
 
-bool FeatureManager::addFeatureTreeCheckParallax(int frame_count, const double header, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const pair<double, vector<TreeNode>> &tree, double td)
+bool FeatureManager::addFeatureTreeCheckParallax(int frame_count, const double header, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const pair<double, vector<pair<int, ObservedTree>>> &tree, double td)
 {
     ///// LOG /////
     std::ostringstream oss;
