@@ -101,13 +101,16 @@ class TreePerFrame
         velocity.x() = _tree.v_x; // velocity x
         velocity.y() = _tree.v_y; // velocity y
         velocity.z() = _tree.v_z; // velocity z
+        n.x() = _tree.n_x; // unit vector to parent node x
+        n.y() = _tree.n_y; // unit vector to parent node y
+        n.z() = _tree.n_z; // unit vector to parent node z
         track_cnt; // tracking counter (how many consecutive frames we've seen the feature)
         cur_td = td;
         frame = _frame_count;
     }
     double cur_td;
     int frame;
-    Vector3d point, velocity;
+    Vector3d point, velocity, n;
     int track_cnt;
 };
 
