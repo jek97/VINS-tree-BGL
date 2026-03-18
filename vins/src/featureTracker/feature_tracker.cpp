@@ -504,68 +504,31 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
 }
 
 
-cv::Mat FeatureTracker::drawForest(const vector<vector<Ex_TreeNode>> &forest, const Eigen::Matrix4d T_tree_lcam, const vector<cv::Scalar> circle_colors, const vector<cv::Scalar> line_colors)
+cv::Mat FeatureTracker::drawForest(const ObservedForest& forest, const Eigen::Matrix4d T_tree_lcam, const vector<cv::Scalar> circle_colors, const vector<cv::Scalar> line_colors)
 {
     cv::Mat img(ref_frame["tree_camera"].height, ref_frame["tree_camera"].width, CV_8UC3, cv::Scalar(255, 255, 255));
 
-    // fill each image with a circle for each node and a line for each edge
-    for(size_t i = 0; i < forest.size(); i++)
+    auto project = [&](double x, double y, double z) -> cv::Point {
+        Eigen::Vector3d p3d = (T_tree_lcam * Eigen::Vector4d(x, y, z, 1)).head<3>();
+        Eigen::Vector3d uvs = K_mat * p3d;
+        return cv::Point(static_cast<int>(uvs[0] / uvs[2]), static_cast<int>(uvs[1] / uvs[2]));
+    };
+
+    for (size_t i = 0; i < forest.size(); ++i)
     {
-        for (const auto& node : forest[i])
-        {   
-            // evaluate the point position in the image 
-            // get the 3d position
-            Eigen::Vector4d p_3d_h;
-            p_3d_h << node.x, node.y, node.z, 1;
-                                
-            // project the point in the tree view
-            Eigen::Vector4d p_3dt_h = T_tree_lcam * p_3d_h;
-            Eigen::Vector3d p_3dt = p_3dt_h.block<3, 1>(0, 0);
-            
-            // project in the image plane
-            Eigen::Vector3d p_uvs = K_mat * p_3dt;
-            Eigen::Vector2d p_img;
-            p_img << p_uvs[0] / p_uvs[2], p_uvs[1] / p_uvs[2];
+        const ObservedTree& tree = forest[i];
+        for (int v = 0; v < (int)boost::num_vertices(tree); ++v)
+        {
+            cv::Point p = project(tree[v].x, tree[v].y, tree[v].z);
+            cv::circle(img, p, 3, circle_colors[i], -1);
 
-            // convert point in cv format
-            cv::Point p_img_cv(static_cast<int>(p_img.x()), static_cast<int>(p_img.y()));
-            
-            // draw a circle for the node
-            cv::circle(img, p_img_cv, 3, circle_colors[i], -1);
-
-            // draw also the edge to the sons nodes
-            for (const auto& son : node.ex_sons) // given the sons
-            { 
-                // find the son in the vector
-                auto it = std::find_if(forest[i].begin(), forest[i].end(), 
-                [&son](const Ex_TreeNode& n) { return n.ex_id == son; });
-
-                if (it != forest[i].end()) {  // If a matching node is found
-                // evaluate the point position in the image 
-                // get the 3d position
-                Eigen::Vector4d p_3d_h_son;
-                p_3d_h_son << it->x, it->y, it->z, 1;
-
-                // project the point in the tree view
-                Eigen::Vector4d p_3dt_h_son = T_tree_lcam * p_3d_h_son;
-                Eigen::Vector3d p_3dt_son = p_3dt_h_son.block<3, 1>(0, 0);
-                
-                // project in the image plane
-                Eigen::Vector3d p_uvs_son = K_mat * p_3dt_son;
-                Eigen::Vector2d p_img_son;
-                p_img_son << p_uvs_son[0] / p_uvs_son[2], p_uvs_son[1] / p_uvs_son[2];
-
-                // convert point in cv format
-                cv::Point p_img_cv_son(static_cast<int>(p_img_son.x()), static_cast<int>(p_img_son.y()));
-
-                // draw a line for the son
-                cv::line(img, p_img_cv, p_img_cv_son, line_colors[i], 2, cv::LINE_8);
-        
-                }
+            for (auto e : boost::make_iterator_range(boost::out_edges(v, tree)))
+            {
+                const int c = boost::target(e, tree);
+                cv::line(img, p, project(tree[c].x, tree[c].y, tree[c].z), line_colors[i], 2, cv::LINE_8);
             }
-        } 
+        }
     }
-    
 
     return img;
 }
@@ -976,47 +939,6 @@ vector<pair<int, vector<pair<pair<string, string>, double>>>> FeatureTracker::Bp
     return matches;
 }
 
-void FeatureTracker::removeNode(string node, vector<Ex_TreeNode>& graph)
-{
-    // delete nodes matched on graph_0
-    // find the matched element m_0 in graph_0
-    auto it = std::find_if(graph.begin(), graph.end(), [&](const Ex_TreeNode& n) {
-        return n.ex_id == node;
-    });
-
-    if (it != graph.end()) {
-        // find the parent of m_0, p_m_0
-        auto it_p = std::find_if(graph.begin(), graph.end(), [&](const Ex_TreeNode& n) {
-            return n.ex_id == it->ex_parent;
-        });
-        
-        // delete m_0 from the sons of its parent p_m_0
-        if(it_p != graph.end())
-        {
-            auto& sons = it_p->ex_sons;
-            sons.erase(std::remove(sons.begin(), sons.end(), it->ex_id), sons.end());
-        }
-
-        // for every son of m_0, s_m_0
-        for(const auto& s : it->ex_sons)
-        {
-            auto it_s = std::find_if(graph.begin(), graph.end(), [&](const Ex_TreeNode& n) {
-                return n.ex_id == s;
-            });
-            
-            // delete m_0 from the parents of its sons s_m_0
-            if (it_s != graph.end()) {
-                it_s->ex_parent = "";  
-            }
-        }
-
-        // finally delete the node m_0
-        graph.erase(it);
-
-    } else {
-        //std::cout << "ERROR deleting node " << node << " from graph" << std::endl;
-    }
-}
 
 void FeatureTracker::removeNode(const string& node_id, ObservedTree& graph)
 {
@@ -1238,7 +1160,7 @@ cv::Scalar FeatureTracker::genRandomColor()
     return cv::Scalar(b, g, r);
 }
 
-pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double _cur_time, vector<vector<Ex_TreeNode>> &cur_forest)
+pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double _cur_time, ObservedForest &cur_forest)
 {        
     // save the K matrix for point visualization (in track tree)
     if(!K_mat_f)
@@ -1262,9 +1184,8 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
             for(size_t i = 0; i < cur_forest.size(); ++i) // for every tree in current forest
             {
                 for(size_t j = 0; j < predict_forest_pts.size(); ++j) // for every tree in previous forest
-                {   
-                    // TODO: adapt call for ObservedForest (deferred – trackForest migration)
-                    // tree_matches[i][j] = isomorphism(cur_forest[i], predict_forest_pts[j]);
+                {
+                    tree_matches[i][j] = isomorphism(cur_forest[i], predict_forest_pts[j]);
                 }
             }
 
@@ -1296,9 +1217,8 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
                 for(size_t i = 0; i < cur_forest.size(); ++i) // for every tree in current forest
                 {
                     for(size_t j = 0; j < prev_forest.size(); ++j) // for every tree in previous forest
-                    {   
-                        // TODO: adapt call for ObservedForest (deferred – trackForest migration)
-                        // tree_matches[i][j] = isomorphism(cur_forest[i], prev_forest[j]);
+                    {
+                        tree_matches[i][j] = isomorphism(cur_forest[i], prev_forest[j]);
                     }
                 }
 
@@ -1339,35 +1259,39 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
         vector<pair<int, vector<pair<pair<string, string>, double>>>> filtered_matches; // = complete_matches; // variable to store the filtered matching
         filtered_matches = remove_statistical_outliers(complete_matches);
         
+        // vecS: find a vertex by ex_id, returns -1 if not found
+        auto find_vd = [](const ObservedTree& tree, const string& ex_id) -> int {
+            for (int v = 0; v < (int)boost::num_vertices(tree); ++v)
+                if (tree[v].ex_id == ex_id) return v;
+            return -1;
+        };
+
         std::ostringstream oss;
         oss << "=========================================================================\nFT matches at time " << std::setprecision(15) << _cur_time << std::endl;
         int n_f_match = 0;
 
         // assign id, track count and evaluate velocity based on filtered matchings
-        for(size_t i = 0; i < cur_forest.size(); ++i)
+        for (size_t i = 0; i < cur_forest.size(); ++i)
         {
-            if(filtered_matches[i].first != -1)
+            if (filtered_matches[i].first != -1)
             {
-                for(const auto& match : filtered_matches[i].second)
+                const ObservedTree& prev_tree = prev_forest[filtered_matches[i].first];
+                for (const auto& match : filtered_matches[i].second)
                 {
-                    const string& prev_node = match.first.second;
-                    const string& cur_node  = match.first.first;
+                    const int prev_vd = find_vd(prev_tree,     match.first.second);
+                    const int cur_vd  = find_vd(cur_forest[i], match.first.first);
+                    if (prev_vd < 0 || cur_vd < 0) continue;
 
-                    auto prev_it = std::find_if(prev_forest[filtered_matches[i].first].begin(), prev_forest[filtered_matches[i].first].end(),
-                        [&prev_node](const Ex_TreeNode& n){ return n.ex_id == prev_node; });
-                    auto cur_it  = std::find_if(cur_forest[i].begin(), cur_forest[i].end(),
-                        [&cur_node](const Ex_TreeNode& n){ return n.ex_id == cur_node; });
+                    ObservedNode& pn = prev_forest[filtered_matches[i].first][prev_vd];
+                    ObservedNode& cn = cur_forest[i][cur_vd];
 
-                    if (cur_it != cur_forest[i].end() && prev_it != prev_forest[filtered_matches[i].first].end())
-                    {
-                        oss << "    prev node " << prev_it->ex_id << " cur node " << cur_it->ex_id << " new id " << prev_it->id << std::endl;
-                        ++n_f_match;
-                        cur_it->id        = prev_it->id;
-                        cur_it->track_cnt = prev_it->track_cnt + 1;
-                        cur_it->v_x = (cur_it->x - prev_it->x) / (_cur_time - _prev_time);
-                        cur_it->v_y = (cur_it->y - prev_it->y) / (_cur_time - _prev_time);
-                        cur_it->v_z = (cur_it->z - prev_it->z) / (_cur_time - _prev_time);
-                    }
+                    oss << "    prev node " << pn.ex_id << " cur node " << cn.ex_id << " new id " << pn.id << std::endl;
+                    ++n_f_match;
+                    cn.id        = pn.id;
+                    cn.track_cnt = pn.track_cnt + 1;
+                    cn.v_x = (cn.x - pn.x) / (_cur_time - _prev_time);
+                    cn.v_y = (cn.y - pn.y) / (_cur_time - _prev_time);
+                    cn.v_z = (cn.z - pn.z) / (_cur_time - _prev_time);
                 }
             }
         }
@@ -1424,25 +1348,21 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
         };
 
         // draw arrows connecting matched nodes
-        for(size_t i = 0; i < cur_forest.size(); ++i)
+        for (size_t i = 0; i < cur_forest.size(); ++i)
         {
-            if(filtered_matches[i].first != -1)
+            if (filtered_matches[i].first != -1)
             {
-                for(const auto& match : filtered_matches[i].second)
+                const ObservedTree& prev_tree = prev_forest[filtered_matches[i].first];
+                for (const auto& match : filtered_matches[i].second)
                 {
-                    const string& prev_node = match.first.second;
-                    const string& cur_node  = match.first.first;
+                    const int prev_vd = find_vd(prev_tree,     match.first.second);
+                    const int cur_vd  = find_vd(cur_forest[i], match.first.first);
+                    if (prev_vd < 0 || cur_vd < 0) continue;
 
-                    auto prev_it = std::find_if(prev_forest[filtered_matches[i].first].begin(), prev_forest[filtered_matches[i].first].end(),
-                        [&prev_node](const Ex_TreeNode& n){ return n.ex_id == prev_node; });
-                    auto cur_it  = std::find_if(cur_forest[i].begin(), cur_forest[i].end(),
-                        [&cur_node](const Ex_TreeNode& n){ return n.ex_id == cur_node; });
-
-                    if (cur_it != cur_forest[i].end() && prev_it != prev_forest[filtered_matches[i].first].end())
-                        cv::arrowedLine(match_img_,
-                            project(prev_it->x, prev_it->y, prev_it->z),
-                            project(cur_it->x,  cur_it->y,  cur_it->z),
-                            cv::Scalar(0, 255, 0), 1, 8, 0, 0.2);
+                    cv::arrowedLine(match_img_,
+                        project(prev_tree[prev_vd].x,     prev_tree[prev_vd].y,     prev_tree[prev_vd].z),
+                        project(cur_forest[i][cur_vd].x,  cur_forest[i][cur_vd].y,  cur_forest[i][cur_vd].z),
+                        cv::Scalar(0, 255, 0), 1, 8, 0, 0.2);
                 }
             }
         }
@@ -1450,58 +1370,25 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
         match_img = std::make_tuple(match_img_, ref_frame["tree_camera"], _cur_time);
     }
     
-    // assign new IDs to any node that was not matched in this frame
-    for (auto& tree : cur_forest)
-        for (auto& node : tree)
-            if (node.id < 0)
-                node.id = new_ids++;
+    // assign new IDs to any node not matched this frame
+    for (ObservedTree& tree : cur_forest)
+        for (int v = 0; v < (int)boost::num_vertices(tree); ++v)
+            if (tree[v].id < 0)
+                tree[v].id = new_ids++;
 
     // save for next iteration
     prev_forest = cur_forest;
     _prev_time = _cur_time;
     has_tree_Prediction = false;
 
-    // convert a vector<Ex_TreeNode> tree to an ObservedTree BGL graph
-    auto to_observed_tree = [](const vector<Ex_TreeNode>& ex_tree) -> ObservedTree
-    {
-        ObservedTree tree;
-        std::unordered_map<std::string, boost::graph_traits<ObservedTree>::vertex_descriptor> id_to_vd;
-
-        for (const auto& n : ex_tree)
-        {
-            ObservedNode on;
-            on.ex_id     = n.ex_id;
-            on.id        = n.id;
-            on.x         = n.x;  on.y = n.y;  on.z = n.z;
-            on.v_x       = n.v_x; on.v_y = n.v_y; on.v_z = n.v_z;
-            on.fd        = n.fd;
-            on.fd_brief  = n.fd_brief;
-            on.component = n.component;
-            on.track_cnt = n.track_cnt;
-            id_to_vd[n.ex_id] = boost::add_vertex(on, tree);
-        }
-
-        for (const auto& n : ex_tree)
-        {
-            if (n.ex_parent == "root" || n.ex_parent == "m_c" || n.ex_parent.empty())
-                continue;
-            auto pit = id_to_vd.find(n.ex_parent);
-            auto cit = id_to_vd.find(n.ex_id);
-            if (pit != id_to_vd.end() && cit != id_to_vd.end())
-                boost::add_edge(pit->second, cit->second, tree);
-        }
-
-        return tree;
-    };
-
-    // build output: one entry per current tree, tagged with the index of its
-    // matched previous tree (-1 if not matched this frame)
+    // build output: one ObservedTree per current tree, tagged with the index
+    // of the previous-forest tree it was matched against (-1 = unmatched)
     vector<pair<int, ObservedTree>> out_forest;
     out_forest.reserve(cur_forest.size());
     for (size_t i = 0; i < cur_forest.size(); ++i)
     {
         const int prev_idx = (i < complete_matches.size()) ? complete_matches[i].first : -1;
-        out_forest.emplace_back(prev_idx, to_observed_tree(cur_forest[i]));
+        out_forest.emplace_back(prev_idx, cur_forest[i]);
     }
 
     return {_cur_time, out_forest};
@@ -1740,38 +1627,29 @@ void FeatureTracker::setPrediction(map<int, Eigen::Vector3d> &predictPts)
 
 void FeatureTracker::set_tree_Prediction(map<int, Eigen::Vector3d> &predict_t_Pts)
 {
-    has_tree_Prediction = true; // Set the has-prediction flag
-    predict_forest_pts.clear(); // Clear previous points
-    predict_forest_pts_debug.clear(); // Clear previous points
-    map<int, Eigen::Vector3d>::iterator itPredict; // init variable
-    for (size_t i = 0; i < prev_forest.size(); ++i) // for every tree in previous forest
-    {   
-        vector<Ex_TreeNode> predict_tree_pts, predict_tree_pts_debug; // create the tree variable to store the predicted and non points
-        for(size_t j = 0; j < prev_forest[i].size(); ++j) // for every node in the tree
+    has_tree_Prediction = true;
+    predict_forest_pts.clear();
+    predict_forest_pts_debug.clear();
+
+    for (const ObservedTree& prev_tree : prev_forest)
+    {
+        ObservedTree predict_tree = prev_tree;       // copy: all nodes + edges, positions updated below
+        ObservedTree predict_tree_debug;             // only nodes that received a prediction
+
+        for (int v = 0; v < (int)boost::num_vertices(predict_tree); ++v)
         {
-            int id = prev_forest[i][j].id; // Get the id of the current node
-        
-            // Find the corresponding node in predict_t_Pts
-            itPredict = predict_t_Pts.find(id);
-
-            if (itPredict != predict_t_Pts.end()) // If the id is found in the predicted points
-            {   
-                Ex_TreeNode predict_t_node = prev_forest[i][j]; // get the tree node
-                // update node position with the predicted one
-                predict_t_node.x = itPredict->second.x();
-                predict_t_node.y = itPredict->second.y();
-                predict_t_node.z = itPredict->second.z();
-
-                predict_tree_pts.push_back(predict_t_node); // Add the prediction to the vector
-                predict_tree_pts_debug.push_back(predict_t_node); // Add the prediction to the debug vector
-            }
-            else // Otherwise, add the previous point as it is
+            auto it = predict_t_Pts.find(predict_tree[v].id);
+            if (it != predict_t_Pts.end())
             {
-                predict_tree_pts.push_back(prev_forest[i][j]);
+                predict_tree[v].x = it->second.x();
+                predict_tree[v].y = it->second.y();
+                predict_tree[v].z = it->second.z();
+                boost::add_vertex(predict_tree[v], predict_tree_debug);
             }
         }
-        predict_forest_pts.push_back(predict_tree_pts); // append the tree to the forest
-        predict_forest_pts_debug.push_back(predict_tree_pts_debug); // append the tree to the forest
+
+        predict_forest_pts.push_back(std::move(predict_tree));
+        predict_forest_pts_debug.push_back(std::move(predict_tree_debug));
     }
 }
 
@@ -1802,23 +1680,18 @@ void FeatureTracker::removeOutliers(set<int> &removePtsIds, set<int> &remove_t_P
     if (USE_TREE)
     {   
         oss << "tree features:" << std::endl;
-        for (vector<Ex_TreeNode>& prev_tree : prev_forest)
+        for (ObservedTree& prev_tree : prev_forest)
         {
-            // prev_tree.erase(std::remove_if(prev_tree.begin(), prev_tree.end(),
-            //                        [&remove_t_PtsIds](const Ex_TreeNode &node) {
-            //                            return remove_t_PtsIds.find(node.id) != remove_t_PtsIds.end(); // O(log N) lookup
-            //                        }),
-            //         prev_tree.end());
-            // only for logging purposes
-            auto it = std::remove_if(prev_tree.begin(), prev_tree.end(),
-                         [&remove_t_PtsIds](const Ex_TreeNode &node) {
-                             return remove_t_PtsIds.find(node.id) != remove_t_PtsIds.end();
-                         });
-
-            oss << "    remove ex id " << it->ex_id << " id " << it->id << std::endl;
-            prev_tree.erase(it, prev_tree.end());
-
-
+            // iterate backwards so remove_vertex renumbering doesn't skip vertices
+            for (int v = (int)boost::num_vertices(prev_tree) - 1; v >= 0; --v)
+            {
+                if (remove_t_PtsIds.count(prev_tree[v].id))
+                {
+                    oss << "    remove ex id " << prev_tree[v].ex_id << " id " << prev_tree[v].id << std::endl;
+                    boost::clear_vertex(v, prev_tree);
+                    boost::remove_vertex(v, prev_tree);
+                }
+            }
         }
     }
 
