@@ -1168,75 +1168,42 @@ pair<vector<vector<double>>, vector<vector<double>>> FeatureTracker::forest_bipa
 
 vector<pair<int, vector<pair<pair<string, string>, double>>>> FeatureTracker::remove_statistical_outliers(const vector<pair<int, vector<pair<pair<string, string>, double>>>>& complete_matches)
 {
-    // Welford's algorithm
+    // Welford's online algorithm for mean and variance
     int n_samples = 0;
     double mean = 0.0;
-    double M2 = 0.0; // sum of squares of diffenrences from the mean
-    double std_dev;
-    //std::cout << "----------------------------------------------------------------------" << std::endl;
-    // evaluate mean and standard deviation
-    for(size_t i = 0; i < complete_matches.size(); ++i) // for every tree in the current forest
+    double M2 = 0.0;
+    double std_dev = 0.0;
+
+    for (const auto& tree : complete_matches)
     {
-        // std::cout << "tree " << complete_matches[i].first << std::endl;
-        if(complete_matches[i].first != -1) // if we have matchings for that tree (note this number is equal to the prev_tree number in the forest if we have matchings)
-        {   
-            for(const auto& match : complete_matches[i].second) // for every node correspondence
-            {   
-                // std::cout << "    match " << match.first.first << "-" << match.first.second << " cost " << match.second << std::endl;
-                n_samples += 1;
+        if (tree.first != -1)
+            for (const auto& match : tree.second)
+            {
+                ++n_samples;
                 double delta = match.second - mean;
                 mean += delta / n_samples;
-                double delta2 =  match.second - mean;
-                M2 += delta * delta2;
+                M2 += delta * (match.second - mean);
             }
-        }
     }
-    
 
-    // the Welford's algorithm is well defined only if the number of samples is > 1
-    if(n_samples <= 1)
-    {
+    if (n_samples <= 1)
         return complete_matches;
-    }
 
-    // evaluate final standard deviation
-    std_dev = std::sqrt(M2 / (n_samples - 1)); // note the standard deviation is a bit out respect the one evaluated with the common formula, but the evaluation process is more stable and efficient
+    std_dev = std::sqrt(M2 / (n_samples - 1));
 
-    // evaluate threshold on the error
-    double up_thresh = mean + std_dev * STAT_OUT_REJ_K; 
-    double down_thresh = mean - std_dev * STAT_OUT_REJ_K;
+    const double up_thresh   = mean + std_dev * STAT_OUT_REJ_K;
+    const double down_thresh = mean - std_dev * STAT_OUT_REJ_K;
 
-    vector<pair<int, vector<pair<pair<string, string>, double>>>> filtered_matches = complete_matches;
+    auto filtered_matches = complete_matches;
 
-    for(size_t i = 0; i < filtered_matches.size(); ++i) // for every tree in the current forest
+    for (auto& tree : filtered_matches)
     {
-        if(filtered_matches[i].first != -1) // if we have matchings for that tree (note this number is equal to the prev_tree number in the forest if we have matchings)
-        {   
-            auto& vec = filtered_matches[i].second;
-            for (auto it = vec.begin(); it != vec.end(); ) 
-            {
-                if ((it->second >= up_thresh) || (it->second <= down_thresh)) // if the sample error is under the threshold
-                {  
-                    it = vec.erase(it);  // erase returns the next valid iterator
-                } 
-                else 
-                {
-                    ++it;
-                }
-            }
-        }
-    }
-    
-    //std::cout << "$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$" << std::endl;
-    for(size_t i = 0; i < filtered_matches.size(); ++i) // for every tree in the current forest
-    {
-        //std::cout << "tree " << filtered_matches[i].first << std::endl;
-        if(filtered_matches[i].first != -1) // if we have matchings for that tree (note this number is equal to the prev_tree number in the forest if we have matchings)
-        {   
-            for(const auto& match : filtered_matches[i].second) // for every node correspondence
-            {   
-                //std::cout << "    match " << match.first.first << "-" << match.first.second << " cost " << match.second << std::endl;
-            }
+        if (tree.first != -1)
+        {
+            auto& vec = tree.second;
+            vec.erase(std::remove_if(vec.begin(), vec.end(),
+                [&](const auto& m){ return m.second >= up_thresh || m.second <= down_thresh; }),
+                vec.end());
         }
     }
 
@@ -1373,80 +1340,48 @@ pair<double, vector<TreeNode>> FeatureTracker::trackForest(double _cur_time, vec
         vector<pair<int, vector<pair<pair<string, string>, double>>>> filtered_matches; // = complete_matches; // variable to store the filtered matching
         filtered_matches = remove_statistical_outliers(complete_matches);
         
-        ///// LOG /////
         std::ostringstream oss;
         oss << "=========================================================================\nFT matches at time " << std::setprecision(15) << _cur_time << std::endl;
         int n_f_match = 0;
-        int n_match = 0;
-        // assign id, track count and evaluate velocity based on matchings
-        for(size_t i = 0; i < cur_forest.size(); ++i) // for every tree in the current forest
+
+        // assign id, track count and evaluate velocity based on filtered matchings
+        for(size_t i = 0; i < cur_forest.size(); ++i)
         {
-            if(filtered_matches[i].first != -1) // if we have matchings for that tree (note this number is equal to the prev_tree number in the forest if we have matchings)
-            {   
-                for(const auto& match : filtered_matches[i].second) // for every node correspondence
-                {   
-                    string prev_node = match.first.second;
-                    string cur_node = match.first.first;
-                     
-                    // find the respective node in cur_forest and in prev_forest
-                    // prev_forest node
-                    auto prev_it = std::find_if(prev_forest[filtered_matches[i].first].begin(), prev_forest[filtered_matches[i].first].end(), [&prev_node](const Ex_TreeNode& node) {
-                            return node.ex_id == prev_node;
-                        });
+            if(filtered_matches[i].first != -1)
+            {
+                for(const auto& match : filtered_matches[i].second)
+                {
+                    const string& prev_node = match.first.second;
+                    const string& cur_node  = match.first.first;
 
-                    // cur_forest node
-                    auto cur_it = std::find_if(cur_forest[i].begin(), cur_forest[i].end(), [&cur_node](const Ex_TreeNode& node) {
-                            return node.ex_id == cur_node;
-                        });
+                    auto prev_it = std::find_if(prev_forest[filtered_matches[i].first].begin(), prev_forest[filtered_matches[i].first].end(),
+                        [&prev_node](const Ex_TreeNode& n){ return n.ex_id == prev_node; });
+                    auto cur_it  = std::find_if(cur_forest[i].begin(), cur_forest[i].end(),
+                        [&cur_node](const Ex_TreeNode& n){ return n.ex_id == cur_node; });
 
-                    if ((cur_it != cur_forest[i].end()) && (prev_it != prev_forest[filtered_matches[i].first].end())) // if you've found both nodes
-                    {   
+                    if (cur_it != cur_forest[i].end() && prev_it != prev_forest[filtered_matches[i].first].end())
+                    {
                         oss << "    prev node " << prev_it->ex_id << " cur node " << cur_it->ex_id << " new id " << prev_it->id << std::endl;
-                        n_f_match++;
-                        cur_it->id = prev_it->id; // assign id
+                        ++n_f_match;
+                        cur_it->id        = prev_it->id;
+                        cur_it->track_cnt = prev_it->track_cnt + 1;
                         matches_names.push_back(prev_it->id);
-                        cur_it->track_cnt = prev_it->track_cnt + 1; // assign track counter
-
-                        // evaluate velocity
                         cur_it->v_x = (cur_it->x - prev_it->x) / (_cur_time - _prev_time);
                         cur_it->v_y = (cur_it->y - prev_it->y) / (_cur_time - _prev_time);
                         cur_it->v_z = (cur_it->z - prev_it->z) / (_cur_time - _prev_time);
-                        
                     }
                 }
             }
         }
 
-        for(size_t i = 0; i < cur_forest.size(); ++i) // for every tree in the current forest
-        {
-            if(complete_matches[i].first != -1) // if we have matchings for that tree (note this number is equal to the prev_tree number in the forest if we have matchings)
-            {   
-                for(const auto& match : complete_matches[i].second) // for every node correspondence
-                {   
-                    string prev_node = match.first.second;
-                    string cur_node = match.first.first;
-                     
-                    // find the respective node in cur_forest and in prev_forest
-                    // prev_forest node
-                    auto prev_it = std::find_if(prev_forest[complete_matches[i].first].begin(), prev_forest[complete_matches[i].first].end(), [&prev_node](const Ex_TreeNode& node) {
-                            return node.ex_id == prev_node;
-                        });
+        // count total matches before outlier removal
+        int n_match = 0;
+        for (const auto& cm : complete_matches)
+            if (cm.first != -1)
+                n_match += static_cast<int>(cm.second.size());
 
-                    // cur_forest node
-                    auto cur_it = std::find_if(cur_forest[i].begin(), cur_forest[i].end(), [&cur_node](const Ex_TreeNode& node) {
-                            return node.ex_id == cur_node;
-                        });
-
-                    if ((cur_it != cur_forest[i].end()) && (prev_it != prev_forest[complete_matches[i].first].end())) // if you've found both nodes
-                    {   
-                        n_match++;
-                    }
-                }
-            }
-        }
         oss << "Total: " << n_match << " filtered " << n_f_match << std::endl;
         logMessage(oss.str());
-        ///// LOG /////
 
         //visualize the results
         // evaluate the transformation matrix from left camera (where the point are represented) and the tree camera
@@ -1483,63 +1418,33 @@ pair<double, vector<TreeNode>> FeatureTracker::trackForest(double _cur_time, vec
         // draw previous forest in the images
         cv::Mat match_img_ = drawForest(prev_forest, T_tree_lcam, match_circle_colors, match_line_colors);
         
-        // draw a line connecting the matched nodes
-        for(size_t i = 0; i < cur_forest.size(); ++i) // for every tree in the current forest
-        {   
-            if(filtered_matches[i].first != -1) // if we have matchings for that tree (note this number is equal to the prev_tree number in the forest if we have matchings)
-            {   
-                for(const auto& match : filtered_matches[i].second) // for every node correspondence
-                {   
-                    string prev_node = match.first.second;
-                    string cur_node = match.first.first;
-                        
-                    // find the respective node in cur_forest and in prev_forest
-                    // prev_forest node
-                    auto prev_it = std::find_if(prev_forest[filtered_matches[i].first].begin(), prev_forest[filtered_matches[i].first].end(), [&prev_node](const Ex_TreeNode& node) {
-                            return node.ex_id == prev_node;
-                        });
+        // project a 3-D point (in left-cam frame) to a cv::Point in the tree-camera image
+        auto project = [&](double x, double y, double z) -> cv::Point {
+            Eigen::Vector3d p3d = (T_tree_lcam * Eigen::Vector4d(x, y, z, 1)).head<3>();
+            Eigen::Vector3d uvs = K_mat * p3d;
+            return cv::Point(static_cast<int>(uvs[0] / uvs[2]), static_cast<int>(uvs[1] / uvs[2]));
+        };
 
-                    // cur_forest node
-                    auto cur_it = std::find_if(cur_forest[i].begin(), cur_forest[i].end(), [&cur_node](const Ex_TreeNode& node) {
-                            return node.ex_id == cur_node;
-                        });
+        // draw arrows connecting matched nodes
+        for(size_t i = 0; i < cur_forest.size(); ++i)
+        {
+            if(filtered_matches[i].first != -1)
+            {
+                for(const auto& match : filtered_matches[i].second)
+                {
+                    const string& prev_node = match.first.second;
+                    const string& cur_node  = match.first.first;
 
-                    if ((cur_it != cur_forest[i].end()) && (prev_it != prev_forest[filtered_matches[i].first].end())) // if you've found both nodes
-                    {   
-                        // get the position of the two points in homogeneous coordinates
-                        Eigen::Vector4d prev_pt(prev_it->x, prev_it->y, prev_it->z, 1);
-                        Eigen::Vector4d cur_pt(cur_it->x, cur_it->y, cur_it->z, 1);
+                    auto prev_it = std::find_if(prev_forest[filtered_matches[i].first].begin(), prev_forest[filtered_matches[i].first].end(),
+                        [&prev_node](const Ex_TreeNode& n){ return n.ex_id == prev_node; });
+                    auto cur_it  = std::find_if(cur_forest[i].begin(), cur_forest[i].end(),
+                        [&cur_node](const Ex_TreeNode& n){ return n.ex_id == cur_node; });
 
-                        // get their image position
-                        // prev point
-                        // project the point in the tree view
-                        Eigen::Vector4d p_3dt_h_p = T_tree_lcam * prev_pt;
-                        Eigen::Vector3d p_3dt_p = p_3dt_h_p.block<3, 1>(0, 0);
-                        
-                        // project in the image plane
-                        Eigen::Vector3d p_uvs_p = K_mat * p_3dt_p;
-                        Eigen::Vector2d p_img_p;
-                        p_img_p << p_uvs_p[0] / p_uvs_p[2], p_uvs_p[1] / p_uvs_p[2];
-
-                        // convert point in cv format
-                        cv::Point p_img_cv_prev(static_cast<int>(p_img_p.x()), static_cast<int>(p_img_p.y()));
-
-                        // cur point
-                        // project the point in the tree view
-                        Eigen::Vector4d p_3dt_h_c = T_tree_lcam * cur_pt;
-                        Eigen::Vector3d p_3dt_c = p_3dt_h_c.block<3, 1>(0, 0);
-                        
-                        // project in the image plane
-                        Eigen::Vector3d p_uvs_c = K_mat * p_3dt_c;
-                        Eigen::Vector2d p_img_c;
-                        p_img_c << p_uvs_c[0] / p_uvs_c[2], p_uvs_c[1] / p_uvs_c[2];
-
-                        // convert point in cv format
-                        cv::Point p_img_cv_cur(static_cast<int>(p_img_c.x()), static_cast<int>(p_img_c.y()));
-                        
-                        // draw an arrow representing the feature motion
-                        cv::arrowedLine(match_img_, p_img_cv_prev, p_img_cv_cur, cv::Scalar(0, 255, 0), 1, 8, 0, 0.2);                   
-                    }
+                    if (cur_it != cur_forest[i].end() && prev_it != prev_forest[filtered_matches[i].first].end())
+                        cv::arrowedLine(match_img_,
+                            project(prev_it->x, prev_it->y, prev_it->z),
+                            project(cur_it->x,  cur_it->y,  cur_it->z),
+                            cv::Scalar(0, 255, 0), 1, 8, 0, 0.2);
                 }
             }
         }
