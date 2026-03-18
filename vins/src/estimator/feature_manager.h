@@ -15,6 +15,7 @@
 #include <vector>
 #include <numeric>
 #include "../tree.h"
+#include <boost/graph/adjacency_list.hpp>
 using namespace std;
 
 #include <eigen3/Eigen/Dense>
@@ -34,6 +35,7 @@ using namespace Eigen;
 #define ROS_ERROR RCUTILS_LOG_ERROR
 
 
+// LEGACY — kept until full migration to ModelTree is complete
 class FeaturePerFrame
 {
   public:
@@ -67,6 +69,7 @@ class FeaturePerFrame
     bool is_stereo;
 };
 
+// LEGACY — kept until full migration to ModelTree is complete
 class FeaturePerId
 {
   public:
@@ -86,6 +89,7 @@ class FeaturePerId
     int endFrame();
 };
 
+// LEGACY — kept until full migration to ModelTree is complete
 class TreePerFrame
 {
   public:
@@ -97,19 +101,17 @@ class TreePerFrame
         velocity.x() = _tree.v_x; // velocity x
         velocity.y() = _tree.v_y; // velocity y
         velocity.z() = _tree.v_z; // velocity z
-        n.x() = _tree.n_x; // unit vector to parent node x
-        n.y() = _tree.n_y; // unit vector to parent node y
-        n.z() = _tree.n_z; // unit vector to parent node z
         track_cnt; // tracking counter (how many consecutive frames we've seen the feature)
         cur_td = td;
         frame = _frame_count;
     }
     double cur_td;
     int frame;
-    Vector3d point, velocity, n;
+    Vector3d point, velocity;
     int track_cnt;
 };
 
+// LEGACY — kept until full migration to ModelTree is complete
 class TreePerId
 {
   public:
@@ -129,6 +131,43 @@ class TreePerId
     int endFrame();
     bool has_frame(int frame) const;
 };
+
+// Vertex bundle for the estimator-side graph (replaces TreePerId).
+struct ModelNode
+{
+    const int feature_id;
+    int       start_frame;
+    vector<TreePerFrame> tree_per_frame;
+    int    used_num        = 0;
+    double estimated_depth = -1.0;
+    int    solve_flag      = 0;    // 0 = unsolved; 1 = success; 2 = failed
+
+    ModelNode(int _feature_id, int _start_frame)
+        : feature_id(_feature_id), start_frame(_start_frame),
+          used_num(0), estimated_depth(-1.0), solve_flag(0) {}
+
+    // Required by Boost; do not use directly (feature_id will be -1).
+    ModelNode() : feature_id(-1), start_frame(-1) {}
+
+    int endFrame() const
+    {
+        return tree_per_frame.back().frame;
+    }
+
+    bool has_frame(int query_frame) const
+    {
+        for (const auto &obs : tree_per_frame)
+            if (obs.frame == query_frame)
+                return true;
+        return false;
+    }
+};
+
+using ModelTree   = boost::adjacency_list<
+    boost::vecS, boost::vecS, boost::directedS,
+    ModelNode, boost::no_property
+>;
+using ModelForest = std::vector<ModelTree>;
 
 class FeatureManager
 {

@@ -68,14 +68,14 @@ class FeatureTracker
 public:
     FeatureTracker();
     map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> trackImage(double _cur_time, const cv::Mat &_img, const cv::Mat &_img1 = cv::Mat());
-    pair<double, vector<TreeNode>> trackForest(double _cur_time, vector<vector<Ex_TreeNode>> &cur_forest);
-    void evaluate_fd( vector<vector<Ex_TreeNode>> &forest);
+    pair<double, vector<pair<int, ObservedTree>>> trackForest(double _cur_time, ObservedForest &cur_forest);
+    void evaluate_fd(ObservedForest &forest);
     int hammingDistance(const std::vector<uint8_t>& fd_brief1, const std::vector<uint8_t>& fd_brief2);
-    pair<double, vector<pair<pair<string, string>, double>>> isomorphism(vector<Ex_TreeNode> tree_0, vector<Ex_TreeNode> tree_1);
-    void match(string node_0, string node_1, vector<Ex_TreeNode>& graph_0, vector<Ex_TreeNode>& graph_1, vector<pair<double, pair<string, string>>>& final_matches);
-    vector<Ex_TreeNode> subtree(vector<Ex_TreeNode> tree, string node);
-    vector<Ex_TreeNode> extended_subtree(vector<Ex_TreeNode> tree, string node);
-    pair<vector<vector<double>>, vector<vector<double>>> tree_bipartite_capacity_cost_evaluation(vector<Ex_TreeNode> graph_L, vector<Ex_TreeNode> graph_R);
+    pair<double, vector<pair<pair<string, string>, double>>> isomorphism(ObservedTree tree_0, ObservedTree tree_1);
+    void match(string node_0, string node_1, ObservedTree& graph_0, ObservedTree& graph_1, vector<pair<double, pair<string, string>>>& final_matches);
+    ObservedTree subtree(const ObservedTree& tree, const string& node_id);
+    ObservedTree extended_subtree(const ObservedTree& tree, const string& node_id);
+    pair<vector<vector<double>>, vector<vector<double>>> tree_bipartite_capacity_cost_evaluation(const ObservedTree& graph_L, const ObservedTree& graph_R);
     class BpMatcher
     {
         public:
@@ -83,7 +83,7 @@ public:
             
             bool search(int src, int sink);
             vector<double> getMaxFlow(vector<vector<double>>& capacity_mat, vector<vector<double>>& cost_mat, int src, int sink);
-            vector<pair<double, pair<string, string>>> get_tree_matchings(const vector<Ex_TreeNode>& graph_L, const vector<Ex_TreeNode>& graph_R);
+            vector<pair<double, pair<string, string>>> get_tree_matchings(const ObservedTree& graph_L, const ObservedTree& graph_R);
             vector<pair<int, vector<pair<pair<string, string>, double>>>> get_forest_matchings(const vector<vector<pair<double, vector<pair<pair<string, string>, double>>>>>& tree_matches);
         
             int N = 0; // Stores the number of nodes
@@ -93,7 +93,7 @@ public:
             vector<bool> found; // Stores the found edges
             const double INF = INT_MAX / 2 - 1;
     };
-    void removeNode(string node, vector<Ex_TreeNode>& graph);
+    void removeNode(const string& node, ObservedTree& graph);
     pair<vector<vector<double>>, vector<vector<double>>> forest_bipartite_capacity_cost_evaluation(vector<vector<pair<double, vector<pair<pair<string, string>, double>>>>> tree_matches);
     vector<pair<int, vector<pair<pair<string, string>, double>>>> remove_statistical_outliers(const vector<pair<int, vector<pair<pair<string, string>, double>>>>& complete_matches);
     void setMask();
@@ -114,7 +114,7 @@ public:
                                    vector<cv::Point2f> &curRightPts,
                                    map<int, cv::Point2f> &prevLeftPtsMap);
     cv::Scalar genRandomColor();
-    cv::Mat drawForest(const vector<vector<Ex_TreeNode>> &forest, const Eigen::Matrix4d T_tree_lcam, const vector<cv::Scalar> circle_colors, const vector<cv::Scalar> line_colors);
+    cv::Mat drawForest(const ObservedForest &forest, const Eigen::Matrix4d T_tree_lcam, const vector<cv::Scalar> circle_colors, const vector<cv::Scalar> line_colors);
     void setPrediction(map<int, Eigen::Vector3d> &predictPts);
     void set_tree_Prediction(map<int, Eigen::Vector3d> &predict_t_Pts);
     double distance(cv::Point2f &pt1, cv::Point2f &pt2);
@@ -149,11 +149,11 @@ public:
     int n_id;
     bool hasPrediction;
 
-    vector<vector<Ex_TreeNode>> prev_forest, cur_forest;
+    ObservedForest prev_forest;
+    ObservedForest predict_forest_pts, predict_forest_pts_debug;
     double _prev_time;
     int new_ids = 0;
     bool has_tree_Prediction;
-    vector<vector<Ex_TreeNode>> predict_forest_pts, predict_forest_pts_debug;
 
     Eigen::Matrix3d K_mat; // defined to reproject the 3d point in the image for visualization purposes
     bool K_mat_f = false;
