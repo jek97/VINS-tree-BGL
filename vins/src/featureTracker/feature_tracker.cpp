@@ -1018,12 +1018,6 @@ void FeatureTracker::removeNode(string node, vector<Ex_TreeNode>& graph)
     }
 }
 
-// removeNode for ObservedTree — implemented via Option A:
-//   clear_vertex() strips all incident edges, then remove_vertex() deletes the
-//   vertex. With vecS all descriptors >= v are renumbered after remove_vertex.
-//   This is safe here because every subsequent lookup is done by ex_id string
-//   (via std::find_if), never by a cached vertex_descriptor. The O(V) scan cost
-//   per removal is acceptable given the small tree sizes involved.
 void FeatureTracker::removeNode(const string& node_id, ObservedTree& graph)
 {
     using VD = boost::graph_traits<ObservedTree>::vertex_descriptor;
