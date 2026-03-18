@@ -1740,10 +1740,10 @@ class VinsNode : public rclcpp::Node, public std::enable_shared_from_this<VinsNo
                         // add node to graph
                         Ex_TreeNode_Skel node;
                         node.ex_id = processing_node;
-                        node.ex_parent = parent; 
+                        node.ex_parent = (parent != processing_node) ? parent : none;
                         out_graph[processing_node] = node;
                         // check parent - son relation
-                        if((parent != none) && (out_graph.find(processing_node) != out_graph.end()) && (std::find(out_graph[parent].ex_sons.begin(), out_graph[parent].ex_sons.end(), processing_node) == out_graph[parent].ex_sons.end())) // if the parent is not none and the parent node is in the graph and has not the processing node as son
+                        if((parent != none) && (parent != processing_node) && (out_graph.find(processing_node) != out_graph.end()) && (std::find(out_graph[parent].ex_sons.begin(), out_graph[parent].ex_sons.end(), processing_node) == out_graph[parent].ex_sons.end())) // if the parent is not none, not itself, and has not yet the processing node as son
                         {
                             out_graph[parent].ex_sons.push_back(processing_node);
                         }
@@ -1762,12 +1762,12 @@ class VinsNode : public rclcpp::Node, public std::enable_shared_from_this<VinsNo
                                     // add node to graph
                                     Ex_TreeNode_Skel node;
                                     node.ex_id = processing_node;
-                                    node.ex_parent = parent; 
+                                    node.ex_parent = (parent != processing_node) ? parent : none;
                                     out_graph[processing_node] = node;
                                     
                                     // check parent - son relation
-                                    if((parent != none) && (out_graph.find(processing_node) != out_graph.end()) && (std::find(out_graph[parent].ex_sons.begin(), out_graph[parent].ex_sons.end(), processing_node) == out_graph[parent].ex_sons.end())) // if the parent is not node and the parent node is in the graph and has not the processing node as son
-                                    {   
+                                    if((parent != none) && (parent != processing_node) && (out_graph.find(processing_node) != out_graph.end()) && (std::find(out_graph[parent].ex_sons.begin(), out_graph[parent].ex_sons.end(), processing_node) == out_graph[parent].ex_sons.end())) // if the parent is not none, not itself, and has not yet the processing node as son
+                                    {
                                         out_graph[parent].ex_sons.push_back(processing_node);
                                     }
                                     node_added_to_parent = true;
@@ -1786,11 +1786,11 @@ class VinsNode : public rclcpp::Node, public std::enable_shared_from_this<VinsNo
                                         // add node to graph
                                         Ex_TreeNode_Skel node;
                                         node.ex_id = processing_node;
-                                        node.ex_parent = parent; 
+                                        node.ex_parent = (parent != processing_node) ? parent : none;
                                         out_graph[processing_node] = node;
                                         
                                         // check parent - son relation
-                                        if((parent != none) && (out_graph.find(processing_node) != out_graph.end()) && (std::find(out_graph[parent].ex_sons.begin(), out_graph[parent].ex_sons.end(), processing_node) == out_graph[parent].ex_sons.end())) // if the parent is not node and the parent node is in the graph and has not the processing node as son
+                                        if((parent != none) && (parent != processing_node) && (out_graph.find(processing_node) != out_graph.end()) && (std::find(out_graph[parent].ex_sons.begin(), out_graph[parent].ex_sons.end(), processing_node) == out_graph[parent].ex_sons.end())) // if the parent is not none, not itself, and has not yet the processing node as son
                                         {
                                             out_graph[parent].ex_sons.push_back(processing_node);
                                         }
