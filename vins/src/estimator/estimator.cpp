@@ -923,7 +923,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
     }  
 }
 
-void Estimator::processImage_tree(const double header, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const pair<double, vector<TreeNode>> &tree)
+void Estimator::processImage_tree(const double header, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const pair<double, vector<pair<int, ObservedTree>>> &tree)
 {   
          
     ROS_DEBUG("new tree and image coming ------------------------------------------");
