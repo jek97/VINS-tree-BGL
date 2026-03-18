@@ -74,7 +74,7 @@ float TS_CONFIDENCE_T;
 float TS_IOU_T;
 double TS_MASK_T;
 double H_CLUSTERING_T_SQ;
-int DOWN_SKEL_K;
+double DOWN_SKEL;
 int MAX_T_CNT;
 int TP_FD_LENGHT;
 double TREE_METRIC_MATCH_THRESH;
@@ -554,7 +554,7 @@ void readParameters(std::string config_file)
         TS_MASK_T = fsSettings["tree_seg_mask_threshold"];
         double h_clustering_t = fsSettings["tree_horizontal_mask_clustering_threshold"]; // Pre-square the threshold to avoid sqrt in distance calculations
         H_CLUSTERING_T_SQ = h_clustering_t * h_clustering_t;
-        fsSettings["downsample_skel_k"] >> DOWN_SKEL_K;
+        fsSettings["downsample_skel_metric"] >> DOWN_SKEL;
         MAX_T_CNT = fsSettings["max_t_cnt"];
         TP_FD_LENGHT = fsSettings["topological_fd_lenght"];
         TREE_METRIC_MATCH_THRESH = fsSettings["metric_match_threshold"];

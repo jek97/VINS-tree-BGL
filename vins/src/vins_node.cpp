@@ -1632,9 +1632,25 @@ class VinsNode : public rclcpp::Node, public std::enable_shared_from_this<VinsNo
             
         }
 
-        std::unordered_map<cv::Point, Ex_TreeNode_Skel, PointHash> skeletonize2d(const cv::Point& root, const cv::Mat& component_mask) 
+        std::unordered_map<cv::Point, Ex_TreeNode_Skel, PointHash> skeletonize2d(const cv::Point& root, const cv::Mat& component_mask, const cv::Mat& depth_image)
         {
-            int every_k_point = DOWN_SKEL_K;
+            // camera intrinsics for 3D back-projection
+            double fx = ref_frame["tree_camera"].k[0];
+            double fy = ref_frame["tree_camera"].k[4];
+            double cx_cam = ref_frame["tree_camera"].k[2];
+            double cy_cam = ref_frame["tree_camera"].k[5];
+
+            // helper: back-project a pixel to 3D camera-frame position
+            auto get_3d_pos = [&](const cv::Point& pt) -> Eigen::Vector3d {
+                float depth = depth_image.at<float>(pt.y, pt.x);
+                if (!std::isfinite(depth) || depth <= 0.0f)
+                    depth = static_cast<float>(INIT_DEPTH);
+                return Eigen::Vector3d(
+                    (pt.x - cx_cam) * depth / fx,
+                    (pt.y - cy_cam) * depth / fy,
+                    depth);
+            };
+
             // Pre-compute skeleton set for fast lookup
             std::unordered_set<cv::Point, PointHash> skeleton_set;
             for (int y = 0; y < component_mask.rows; y++) {
@@ -1647,8 +1663,8 @@ class VinsNode : public rclcpp::Node, public std::enable_shared_from_this<VinsNo
 
             // class for the node_to_expand datastructure
             struct expand_class {
-                int count = 0;          
-                cv::Point point;        
+                Eigen::Vector3d prev_sel_point{0.0, 0.0, 0.0};  // 3D position of last added node
+                cv::Point point;                                   // graph parent pixel
             };
 
             // none point
@@ -1666,6 +1682,7 @@ class VinsNode : public rclcpp::Node, public std::enable_shared_from_this<VinsNo
             // kickstart
             // node to expand
             expand_class e_root;
+            e_root.prev_sel_point = get_3d_pos(root);
             e_root.point = root;
             node_to_expand[root] = e_root;
 
@@ -1690,10 +1707,14 @@ class VinsNode : public rclcpp::Node, public std::enable_shared_from_this<VinsNo
                 {   
                     cv::Point processing_node = current_nodes[i];
                     
-                    // get count and parent of processing node
+                    // get prev_sel_point and parent of processing node
                     auto& exp_data = node_to_expand[processing_node];
-                    int count = exp_data.count;
-                    cv::Point parent = exp_data.point;  
+                    Eigen::Vector3d cur_prev_sel_point = exp_data.prev_sel_point;
+                    cv::Point parent = exp_data.point;
+
+                    // compute 3D position of the current processing node
+                    Eigen::Vector3d processing_node_position = get_3d_pos(processing_node);
+                    double distance = (processing_node_position - cur_prev_sel_point).norm();
                     
                     // get all unvisited neighbors
                     std::vector<cv::Point> neighbors;
@@ -1775,22 +1796,23 @@ class VinsNode : public rclcpp::Node, public std::enable_shared_from_this<VinsNo
                                 
                                 expand_class e;
                                 e.point = processing_node;
+                                e.prev_sel_point = processing_node_position;
                                 node_to_expand[neighbor] = e;
                             }
                             else // single path
-                            {   
-                                if(count >= every_k_point) // downsample
+                            {
+                                if(distance >= DOWN_SKEL) // far enough — add node
                                 {
                                     if(!node_added_to_parent)
-                                    {   
+                                    {
                                         // add node to graph
                                         Ex_TreeNode_Skel node;
                                         node.ex_id = processing_node;
                                         node.ex_parent = (parent != processing_node) ? parent : none;
                                         out_graph[processing_node] = node;
-                                        
+
                                         // check parent - son relation
-                                        if((parent != none) && (parent != processing_node) && (out_graph.find(processing_node) != out_graph.end()) && (std::find(out_graph[parent].ex_sons.begin(), out_graph[parent].ex_sons.end(), processing_node) == out_graph[parent].ex_sons.end())) // if the parent is not none, not itself, and has not yet the processing node as son
+                                        if((parent != none) && (parent != processing_node) && (out_graph.find(processing_node) != out_graph.end()) && (std::find(out_graph[parent].ex_sons.begin(), out_graph[parent].ex_sons.end(), processing_node) == out_graph[parent].ex_sons.end()))
                                         {
                                             out_graph[parent].ex_sons.push_back(processing_node);
                                         }
@@ -1798,13 +1820,14 @@ class VinsNode : public rclcpp::Node, public std::enable_shared_from_this<VinsNo
                                     }
                                     expand_class e;
                                     e.point = processing_node;
+                                    e.prev_sel_point = processing_node_position;
                                     node_to_expand[neighbor] = e;
                                 }
-                                else
+                                else // not far enough — skip, propagate prev_sel_point unchanged
                                 {
                                     expand_class e;
                                     e.point = parent;
-                                    e.count = count + 1;
+                                    e.prev_sel_point = cur_prev_sel_point;
                                     node_to_expand[neighbor] = e;
                                 }
                             }
@@ -1976,7 +1999,7 @@ class VinsNode : public rclcpp::Node, public std::enable_shared_from_this<VinsNo
                 // get 3d downsample skeleton
                 cv::Mat lowest_component_mask = (labels == lowest_comp_id);
 
-                std::unordered_map<cv::Point, Ex_TreeNode_Skel, PointHash> tree_2d = skeletonize2d(lowest_root, lowest_component_mask);
+                std::unordered_map<cv::Point, Ex_TreeNode_Skel, PointHash> tree_2d = skeletonize2d(lowest_root, lowest_component_mask, depth_image);
                 if(tree_2d.size() > 0)
                 {
                     forest_2d.push_back(make_pair(lowest_comp_id, tree_2d));

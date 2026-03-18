@@ -103,7 +103,7 @@ extern float TS_CONFIDENCE_T;
 extern float TS_IOU_T;
 extern double TS_MASK_T;
 extern double H_CLUSTERING_T_SQ;
-extern int DOWN_SKEL_K;
+extern double DOWN_SKEL;
 extern int MAX_T_CNT;
 extern int TP_FD_LENGHT;
 extern double TREE_METRIC_MATCH_THRESH;
