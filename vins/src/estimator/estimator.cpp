@@ -415,12 +415,17 @@ void Estimator::processMeasurements()
                     curTime = feature.first + td; // get the first element of the feature (its time)
 
                     // extract tree features
-                    pair<double, vector<TreeNode>> t_feature = tree_featureBuf.front().second; // get the first feature in the buffer
+                    pair<double, vector<pair<int, ObservedTree>>> t_feature = tree_featureBuf.front().second;
                     ///// LOG /////
                     std::ostringstream oss;
                     oss << "=========================================================================\nE pm forest at time " << std::setprecision(15) << curTime << std::endl;
-                    for(size_t i = 0; i < t_feature.second.size(); ++i){
-                        oss << "    node " << t_feature.second[i].id << " pos " << t_feature.second[i].x << " " << t_feature.second[i].y << " " << t_feature.second[i].z << " normal " << t_feature.second[i].n_x << " " << t_feature.second[i].n_y << " " << t_feature.second[i].n_z << " track cnt " << t_feature.second[i].track_cnt << std::endl;
+                    for (size_t i = 0; i < t_feature.second.size(); ++i) {
+                        const ObservedTree& tree = t_feature.second[i].second;
+                        oss << "  tree " << i << " (prev_idx=" << t_feature.second[i].first << ")\n";
+                        for (int v = 0; v < (int)boost::num_vertices(tree); ++v) {
+                            const ObservedNode& n = tree[v];
+                            oss << "    node " << n.id << " pos " << n.x << " " << n.y << " " << n.z << " track cnt " << n.track_cnt << "\n";
+                        }
                     }
                     logMessage(oss.str());
                     ///// LOG /////
