@@ -1238,7 +1238,7 @@ cv::Scalar FeatureTracker::genRandomColor()
     return cv::Scalar(b, g, r);
 }
 
-pair<double, vector<TreeNode>> FeatureTracker::trackForest(double _cur_time, vector<vector<Ex_TreeNode>> &cur_forest)
+pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double _cur_time, vector<vector<Ex_TreeNode>> &cur_forest)
 {        
     // save the K matrix for point visualization (in track tree)
     if(!K_mat_f)
@@ -1252,7 +1252,6 @@ pair<double, vector<TreeNode>> FeatureTracker::trackForest(double _cur_time, vec
     // evaluate_fd(cur_forest);
     
     vector<pair<int, vector<pair<pair<string, string>, double>>>> complete_matches;
-    vector<int> matches_names;
     if(prev_forest.size() > 0)
     {          
         if(has_tree_Prediction)
@@ -1365,7 +1364,6 @@ pair<double, vector<TreeNode>> FeatureTracker::trackForest(double _cur_time, vec
                         ++n_f_match;
                         cur_it->id        = prev_it->id;
                         cur_it->track_cnt = prev_it->track_cnt + 1;
-                        matches_names.push_back(prev_it->id);
                         cur_it->v_x = (cur_it->x - prev_it->x) / (_cur_time - _prev_time);
                         cur_it->v_y = (cur_it->y - prev_it->y) / (_cur_time - _prev_time);
                         cur_it->v_z = (cur_it->z - prev_it->z) / (_cur_time - _prev_time);
@@ -1452,245 +1450,61 @@ pair<double, vector<TreeNode>> FeatureTracker::trackForest(double _cur_time, vec
         match_img = std::make_tuple(match_img_, ref_frame["tree_camera"], _cur_time);
     }
     
-    // get number of nodes in current forest
-    int n_nodes_cur_forest = 0;
-    for(const auto& tree : cur_forest)
-    {
-        n_nodes_cur_forest += tree.size();
-    }
-   
-    vector<vector<Ex_TreeNode>> selected_forest;
-    if((MAX_T_CNT - n_nodes_cur_forest) > 0) // if you have space to save all the forest
-    {   
-        selected_forest = cur_forest; // add all the forest
-    }
-    else
-    {   
-        for(auto& tree : cur_forest) // for every tree
-        {   
-            // evaluate the number of nodes we can add from this tree (weighted on the number of nodes of the tree)
-            int max_n_node = std::floor((tree.size() * MAX_T_CNT) / n_nodes_cur_forest);
-            
-            // sort the nodes based on their track_cnt (note matched nodes will have an higher one and like that we privilege the long tracked nodes in saving them for next iteration)
-            // get a vector of pairs with track counter, indeces
-            vector<pair<int, string>> ordered_nodes; //vector of pairs to be sorted to get the order
-            std::unordered_map<std::string, Ex_TreeNode*> node_map; // node map for fast access
-            
-            for (auto& node : tree)
-            {   
-                ordered_nodes.emplace_back(node.track_cnt, node.ex_id);
-                node_map[node.ex_id] = &node;
-            }
-           
-            // sort it
-            std::sort(ordered_nodes.begin(), ordered_nodes.end(), [](const auto &a, const auto &b) {
-                return a.first > b.first;  // Sort by first element (descending)
-            });
+    // assign new IDs to any node that was not matched in this frame
+    for (auto& tree : cur_forest)
+        for (auto& node : tree)
+            if (node.id < 0)
+                node.id = new_ids++;
 
-            int i = 0; // index where to start getting nodes from the list
-            vector<Ex_TreeNode> selected_tree; // variable to keep the nodes saved 
-            unordered_set<string> selected_nodes; // variable to check which node we already added to selected_tree
-
-            while(i < ordered_nodes.size())
-            {   
-                string n_i = ordered_nodes[i].second; // get the node (name) in the ordered list starting from the first one
-                vector<Ex_TreeNode> tmp_tree; // variable to save the path untill root
-                
-                // find path to root
-                while(true) 
-                {   
-                    if(!selected_nodes.count(n_i)) // if the node hasn't already been selected in the previous iteration
-                    {   
-                        tmp_tree.push_back(*node_map[n_i]); // save node to temporary tree
-                    }
-                    else // if we already saved the feature in the selected nodes it meaans we already saved also the path from that node to the root, sso it doesn't make sense to continue the search
-                    {
-                        break;
-                    }
-                    
-                    if((node_map[n_i]->ex_parent != "root") && (node_map[n_i]->ex_parent != "m_c")) // if i have a parent
-                    {   
-                        n_i = node_map[n_i]->ex_parent; // move to node parent in next iteration
-                    }
-                    else // else
-                    {   
-                        break; // break loop
-                    }
-                }
-                
-                if(((selected_tree.size() + tmp_tree.size()) <= max_n_node) && tmp_tree.size() > 0) // if by adding the temporary nodes (i.e. nodes from the current n_i node to the root) in the selected ones i don't surpass the maximum number of nodes i can add
-                {   
-                    selected_tree.insert(selected_tree.end(), tmp_tree.begin(), tmp_tree.end()); // add them
-                    for(const auto& tmp_n : tmp_tree)
-                    {
-                        selected_nodes.insert(tmp_n.ex_id); // add their ids in the selected_nodes set
-                    }
-                }
-                else if(selected_tree.size() == max_n_node) // if you filled selected tree with the maximum number of nodes, doesn't make sense to continue to search
-                {
-                    break;
-                }
-                else
-                {   
-                    i += 1; // increase i to get the next node in priority order
-                    continue;
-                }
-                
-                i += 1; // increase i to get the next node in priority order
-            }   
-            
-            // if i still have some space (aka i didn't get able to add all the path from a matched node to the root because it was too big) add the remaining nodes from the sons of the selected nodes
-            if(max_n_node > (selected_tree.size()))
-            {   
-                std::vector<std::string> selected_nodes_vec(selected_nodes.begin(), selected_nodes.end());
-                for (size_t i = 0; i < selected_nodes_vec.size(); ++i) // for all the selected nodes
-                {   
-                    const auto& s_n = selected_nodes_vec[i];
-                    for(const auto& son_s_n : node_map[s_n]->ex_sons) // for all the sons of the selected node
-                    {
-                        if(!selected_nodes.count(son_s_n) && ((max_n_node - (selected_tree.size() + 1)) > 0) && son_s_n != "tip") // if i din't select the node yet and i still have space to add a node
-                        {   
-                            selected_tree.push_back(*node_map[son_s_n]); // add the node to the selected tree
-                            selected_nodes.insert(son_s_n); // add it to the list of selected nodes
-                            selected_nodes_vec.push_back(son_s_n);
-                        }
-                        else
-                        {   
-                            break;
-                        }
-                    }
-                }
-            }
-            
-            // verify that all the relations sons, parent are coherent with the selected nodes: during the selection process we may not select some nodes that will remain in the parent sons attribute of their neighbors, here we remove them
-            for(auto& node : selected_tree){ // for all the selected nodes
-                if((!selected_nodes.count(node.ex_parent)) && (node.ex_parent != "root") && (node.ex_parent != "m_c")){ // if the parent is not among the selected nodes
-                    node.ex_parent = "root";
-                    ROS_ERROR("Featuretracking matching something wenty wrong");
-                }
-                
-                // Remove sons not in selected_nodes
-                node.ex_sons.erase(
-                    std::remove_if(node.ex_sons.begin(), node.ex_sons.end(),
-                        [&](const std::string& son) {
-                            return !selected_nodes.count(son);
-                        }
-                    ),
-                    node.ex_sons.end()
-                );
-
-                // If no sons left, add "tip"
-                if (node.ex_sons.empty()) {
-                    node.ex_sons.push_back("tip");
-                }
-            }
-
-            selected_forest.push_back(selected_tree); // add the selected tree to the selected forest
-        }
-    }
-
-    // assign a unique id to the nodes
-    map<string, int> lu_table; // create a lookup table that associate nodes ex_id and new id
-    for(auto& s_tree : selected_forest) // foe every selected tree
-    {
-        for(auto& s_n : s_tree) // for every selected node 
-        {
-            if(s_n.id < 0) // if we didn't assign an id yet (i.e. we didn't match the node yet)
-            {
-                s_n.id = new_ids; // assign new id
-                lu_table[s_n.ex_id] = new_ids; /// save the new id in the lookup table
-                new_ids += 1; // increase the new_ids variable
-            }
-            else // if we aalready assigned an id (i.e. we matched the node)
-            {
-                lu_table[s_n.ex_id] = s_n.id; // save the id in the lookup table
-            }
-        }
-    }
-
-    // save variable for next iteration
-    prev_forest = selected_forest; 
+    // save for next iteration
+    prev_forest = cur_forest;
     _prev_time = _cur_time;
     has_tree_Prediction = false;
 
-    // convert forest in a single vector of nodes (ATTENTION for now i will do like that since the rest of the node reason like that, but in a future it may be convinient to modify the rest of the code to operate with the division in trees)
-    vector<TreeNode> out_forest;
-    int n_m_deb = 0;
-    for(const auto& ex_tree : selected_forest)
-    {   
-        for(const auto& ex_node : ex_tree)
+    // convert a vector<Ex_TreeNode> tree to an ObservedTree BGL graph
+    auto to_observed_tree = [](const vector<Ex_TreeNode>& ex_tree) -> ObservedTree
+    {
+        ObservedTree tree;
+        std::unordered_map<std::string, boost::graph_traits<ObservedTree>::vertex_descriptor> id_to_vd;
+
+        for (const auto& n : ex_tree)
         {
-            TreeNode node;
-            // assign id
-            node.id = ex_node.id;
-
-            if (std::find(matches_names.begin(), matches_names.end(), ex_node.id) != matches_names.end()) {
-                n_m_deb += 1;
-            } 
-
-            // assign position
-            node.x = ex_node.x;
-            node.y = ex_node.y;
-            node.z = ex_node.z;
-
-            if(ICP_P2L) // if we are gonna use a point to line cost function
-            {
-                // evaluate unit vector from node to its parent
-                // find parent
-                if((ex_node.ex_parent == "root") || (ex_node.ex_parent == "m_c"))// if its the root node
-                {
-                    // assign z vector pointing downward
-                    node.n_x = -base_link_z.x();
-                    node.n_y = -base_link_z.y();
-                    node.n_z = -base_link_z.z();
-                }
-                else
-                {   
-                    string parent_id = ex_node.ex_parent;
-                    auto it = std::find_if(ex_tree.begin(), ex_tree.end(),
-                        [parent_id](const Ex_TreeNode& node) {
-                            return node.ex_id == parent_id;
-                        });
-
-                    if (it != ex_tree.end()) // if found
-                    {
-                        // get current node position
-                        Eigen::Vector3d p(ex_node.x, ex_node.y, ex_node.z);
-
-                        // get parent node position
-                        Eigen::Vector3d p_parent(it->x, it->y, it->z);
-                        
-                        // evaluate unit vector from current node to its parent
-                        Eigen::Vector3d v = (p_parent - p) / (p_parent - p).norm();
-
-                        // assign it
-                        node.n_x = v.x();
-                        node.n_y = v.y();
-                        node.n_z = v.z();
-                    }
-                    else 
-                    {
-                        ROS_WARN("didn't found parent node for ICP normal evaluation");
-                    }
-                }
-            }
-
-            // assign velocity
-            node.v_x = ex_node.v_x;
-            node.v_y = ex_node.v_y;
-            node.v_z = ex_node.v_z;
-            
-
-            // assign track counter
-            node.track_cnt = ex_node.track_cnt;
-
-            // add it to the out forest
-            out_forest.push_back(node);
+            ObservedNode on;
+            on.ex_id     = n.ex_id;
+            on.id        = n.id;
+            on.x         = n.x;  on.y = n.y;  on.z = n.z;
+            on.v_x       = n.v_x; on.v_y = n.v_y; on.v_z = n.v_z;
+            on.fd        = n.fd;
+            on.fd_brief  = n.fd_brief;
+            on.component = n.component;
+            on.track_cnt = n.track_cnt;
+            id_to_vd[n.ex_id] = boost::add_vertex(on, tree);
         }
+
+        for (const auto& n : ex_tree)
+        {
+            if (n.ex_parent == "root" || n.ex_parent == "m_c" || n.ex_parent.empty())
+                continue;
+            auto pit = id_to_vd.find(n.ex_parent);
+            auto cit = id_to_vd.find(n.ex_id);
+            if (pit != id_to_vd.end() && cit != id_to_vd.end())
+                boost::add_edge(pit->second, cit->second, tree);
+        }
+
+        return tree;
+    };
+
+    // build output: one entry per current tree, tagged with the index of its
+    // matched previous tree (-1 if not matched this frame)
+    vector<pair<int, ObservedTree>> out_forest;
+    out_forest.reserve(cur_forest.size());
+    for (size_t i = 0; i < cur_forest.size(); ++i)
+    {
+        const int prev_idx = (i < complete_matches.size()) ? complete_matches[i].first : -1;
+        out_forest.emplace_back(prev_idx, to_observed_tree(cur_forest[i]));
     }
-    
-    pair<double, vector<TreeNode>> t_featureFrame = make_pair(_cur_time, out_forest);
-    return t_featureFrame;
+
+    return {_cur_time, out_forest};
 
 }
 
