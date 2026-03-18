@@ -279,15 +279,13 @@ void Estimator::logMessage(const std::string& message)
 void Estimator::inputForest(double t, std::pair<bool, ObservedForest> &forest)
 {
     input_tree_Cnt++;
-    pair<bool, pair<double, vector<TreeNode>>> t_featureFrame;
+    pair<bool, pair<double, vector<pair<int, ObservedTree>>>> t_featureFrame;
     if(forest.first) // if we received a valid forest
     {
         t_featureFrame.first = true;
-        // TODO: adapt trackForest to accept ObservedForest (deferred – next refactor step)
-        // t_featureFrame.second = featureTracker.trackForest(t, forest.second);
-        // auto [joinedImage, cam_info, match_time] = featureTracker.getTreeMatch();
-        // pubTreeMatchImage(joinedImage, cam_info, match_time);
-        t_featureFrame.second.first = t; // placeholder until trackForest is updated
+        t_featureFrame.second = featureTracker.trackForest(t, forest.second);
+        auto [joinedImage, cam_info, match_time] = featureTracker.getTreeMatch();
+        pubTreeMatchImage(joinedImage, cam_info, match_time);
     }
     else
     {

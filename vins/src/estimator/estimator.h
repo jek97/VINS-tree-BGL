@@ -192,7 +192,7 @@ class Estimator
     bool initFirstPoseFlag;
     bool initThreadFlag;
 
-    queue<pair<bool, pair<double, vector<TreeNode>>>> tree_featureBuf;
+    queue<pair<bool, pair<double, vector<pair<int, ObservedTree>>>>> tree_featureBuf;
     int input_tree_Cnt;
 
     // DEBUG JUMPS
