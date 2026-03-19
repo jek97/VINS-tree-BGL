@@ -1409,7 +1409,7 @@ void FeatureManager::removeOutlier(set<int> &outlierIndex, set<int> &tree_outlie
                     to_remove.push_back(v);
                 }
             for (int i = (int)to_remove.size() - 1; i >= 0; --i)
-                boost::remove_vertex(to_remove[i], model_tree);
+                node_bypass(model_tree, to_remove[i]);
         }
         t_feature.erase(
             std::remove_if(t_feature.begin(), t_feature.end(),
@@ -1747,7 +1747,7 @@ void FeatureManager::removeFront(int frame_count)
                 }
             }
             for (int i = (int)to_remove.size() - 1; i >= 0; --i)
-                boost::remove_vertex(to_remove[i], model_tree);
+                node_bypass(model_tree, to_remove[i]);
         }
         t_feature.erase(
             std::remove_if(t_feature.begin(), t_feature.end(),
