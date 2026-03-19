@@ -95,16 +95,29 @@ class TreePerFrame
   public:
     TreePerFrame(const TreeNode &_tree, double td, int _frame_count)
     {
-        point.x() = _tree.x; // position x
-        point.y() = _tree.y; // position y
-        point.z() = _tree.z; // position z
-        velocity.x() = _tree.v_x; // velocity x
-        velocity.y() = _tree.v_y; // velocity y
-        velocity.z() = _tree.v_z; // velocity z
-        n.x() = _tree.n_x; // unit vector to parent node x
-        n.y() = _tree.n_y; // unit vector to parent node y
-        n.z() = _tree.n_z; // unit vector to parent node z
-        track_cnt; // tracking counter (how many consecutive frames we've seen the feature)
+        point.x() = _tree.x;
+        point.y() = _tree.y;
+        point.z() = _tree.z;
+        velocity.x() = _tree.v_x;
+        velocity.y() = _tree.v_y;
+        velocity.z() = _tree.v_z;
+        n.x() = _tree.n_x;
+        n.y() = _tree.n_y;
+        n.z() = _tree.n_z;
+        track_cnt = _tree.track_cnt;
+        cur_td = td;
+        frame = _frame_count;
+    }
+    TreePerFrame(const ObservedNode &_node, double td, int _frame_count)
+    {
+        point.x() = _node.x;
+        point.y() = _node.y;
+        point.z() = _node.z;
+        velocity.x() = _node.v_x;
+        velocity.y() = _node.v_y;
+        velocity.z() = _node.v_z;
+        n = Vector3d::Zero(); // not available in ObservedNode
+        track_cnt = _node.track_cnt;
         cur_td = td;
         frame = _frame_count;
     }
@@ -208,7 +221,7 @@ class FeatureManager
     void removeOutlier(set<int> &outlierIndex, set<int> &tree_outlierIndex);
     void logMessage(const std::string& message); // DEBUG
     list<FeaturePerId> feature;
-    list<TreePerId> t_feature;
+    ModelForest m_model_forest;
     int last_track_num;
     double last_average_parallax;
     int new_feature_num;
@@ -243,7 +256,7 @@ class FeatureManager
 
   private:
     double compensatedParallax2(const FeaturePerId &it_per_id, int frame_count);
-    double compensated_tree_Parallax2(const TreePerId &it_per_id, int frame_count);
+    double compensated_tree_Parallax2(const ModelNode &node, int frame_count);
     const Matrix3d *Rs;
     Matrix3d ric[2];
 };
