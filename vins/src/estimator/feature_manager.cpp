@@ -8,6 +8,7 @@
  *******************************************************/
 
 #include "feature_manager.h"
+#include <boost/graph/topological_sort.hpp>
 
 int FeaturePerId::endFrame()
 {
@@ -473,70 +474,49 @@ void FeatureManager::removeFailures()
     }
     if (USE_TREE)
     {
-        // Helpers: walk up/down through chains of failed nodes to find the first
-        // surviving ancestor and all surviving descendants.
-        // Both use the original graph (no removals yet), so indices are stable.
-
-        std::function<int(int, const ModelTree &, const std::set<int> &)>
-        surviving_ancestor = [&](int v, const ModelTree &g,
-                                 const std::set<int> &rm) -> int
-        {
-            auto [iei, iei_end] = boost::in_edges(v, g);
-            if (iei == iei_end) return -1; // root — no parent
-            int parent = (int)boost::source(*iei, g);
-            return rm.count(parent) ? surviving_ancestor(parent, g, rm) : parent;
-        };
-
-        std::function<void(int, const ModelTree &, const std::set<int> &, std::vector<int> &)>
-        surviving_descendants = [&](int v, const ModelTree &g,
-                                    const std::set<int> &rm,
-                                    std::vector<int> &out)
-        {
-            auto [oei, oei_end] = boost::out_edges(v, g);
-            for (; oei != oei_end; ++oei)
-            {
-                int child = (int)boost::target(*oei, g);
-                if (rm.count(child))
-                    surviving_descendants(child, g, rm, out); // skip failed, go deeper
-                else
-                    out.push_back(child);
-            }
-        };
-
         for (auto &model_tree : t_feature)
         {
-            // Collect the set of vertices to remove.
-            std::set<int> remove_set;
-            for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
-                if (model_tree[v].solve_flag == 2)
-                    remove_set.insert(v);
+            // Get topological order (parents before children) so that when we
+            // remove a node and bridge parent→children, the children's in-edge
+            // is already the bridged parent when they are processed next.
+            // topological_sort returns reverse order, so we reverse it.
+            std::vector<int> topo;
+            boost::topological_sort(model_tree, std::back_inserter(topo));
+            std::reverse(topo.begin(), topo.end());
 
-            if (remove_set.empty()) continue;
-
-            // Phase 1 — compute bypass edges on the original graph.
-            // Use a set of pairs to avoid adding the same edge twice (e.g. from
-            // two adjacent failed nodes in a chain both resolving to the same
-            // ancestor→descendant pair).
-            std::set<std::pair<int,int>> new_edges;
-            for (int v : remove_set)
+            for (int i = 0; i < (int)topo.size(); )
             {
-                int anc = surviving_ancestor(v, model_tree, remove_set);
-                if (anc == -1) continue;
-                std::vector<int> desc;
-                surviving_descendants(v, model_tree, remove_set, desc);
-                for (int d : desc)
-                    new_edges.emplace(anc, d);
-            }
-            for (auto [src, tgt] : new_edges)
-                boost::add_edge(src, tgt, model_tree);
+                int v = topo[i];
+                if (model_tree[v].solve_flag != 2) { ++i; continue; }
 
-            // Phase 2 — remove failed vertices, highest index first so that
-            // lower indices remain stable after each remove_vertex call.
-            std::vector<int> to_remove(remove_set.rbegin(), remove_set.rend());
-            for (int v : to_remove)
-            {
+                // Direct parent (may already be a bridge added in an earlier step).
+                int parent = -1;
+                {
+                    auto [iei, iei_end] = boost::in_edges(v, model_tree);
+                    if (iei != iei_end)
+                        parent = (int)boost::source(*iei, model_tree);
+                }
+
+                // Collect children before adding edges (avoid iterator invalidation).
+                if (parent != -1)
+                {
+                    std::vector<int> children;
+                    auto [oei, oei_end] = boost::out_edges(v, model_tree);
+                    for (; oei != oei_end; ++oei)
+                        children.push_back((int)boost::target(*oei, model_tree));
+                    for (int c : children)
+                        boost::add_edge(parent, c, model_tree);
+                }
+
                 boost::remove_vertex(v, model_tree);
                 tree_features_removed++;
+
+                // remove_vertex(v) shifts every index > v down by 1.
+                // Update the remaining entries in topo accordingly.
+                topo.erase(topo.begin() + i);
+                for (int j = i; j < (int)topo.size(); ++j)
+                    if (topo[j] > v) topo[j]--;
+                // Do not advance i: the element now at position i is the next one.
             }
         }
         // Remove trees that became empty.
