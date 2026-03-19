@@ -114,7 +114,7 @@ class TreePerFrame
 // Vertex bundle for the estimator-side graph.
 struct ModelNode
 {
-    const int feature_id;
+    int feature_id;
     int       start_frame;
     vector<TreePerFrame> tree_per_frame;
     int    used_num        = 0;
