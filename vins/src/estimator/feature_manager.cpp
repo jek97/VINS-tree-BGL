@@ -1403,11 +1403,15 @@ void FeatureManager::removeOutlier(set<int> &outlierIndex, set<int> &tree_outlie
         {
             vector<int> to_remove;
             for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
+            {
+                if (model_tree[v].solve_flag == 3)
+                    continue;  // dormant nodes are not used in optimization, skip
                 if (tree_outlierIndex.count(model_tree[v].feature_id))
                 {
                     oss << "    removing " << model_tree[v].feature_id << std::endl;
                     to_remove.push_back(v);
                 }
+            }
             for (int i = (int)to_remove.size() - 1; i >= 0; --i)
                 node_bypass(model_tree, to_remove[i]);
         }
@@ -1488,10 +1492,11 @@ void FeatureManager::removeBackShiftDepth(Eigen::Matrix3d marg_R, Eigen::Vector3
     {
         for (auto &model_tree : t_feature)
         {
-            vector<int> to_remove;
             for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
             {
                 ModelNode &node = model_tree[v];
+                if (node.solve_flag == 3)
+                    continue;  // already dormant, leave untouched
                 if (node.start_frame != 0)
                 {
                     node.start_frame--;
@@ -1499,13 +1504,21 @@ void FeatureManager::removeBackShiftDepth(Eigen::Matrix3d marg_R, Eigen::Vector3
                 }
                 else
                 {
-                    Eigen::Vector3d anchor_pt = node.tree_per_frame[0].point.normalized();
+                    // Save the observation being removed so we can reuse its track_cnt.
+                    TreePerFrame removed_obs = node.tree_per_frame[0];
+                    Eigen::Vector3d anchor_pt = removed_obs.point.normalized();
                     node.tree_per_frame.erase(node.tree_per_frame.begin());
                     for (auto &fpf : node.tree_per_frame) fpf.frame--;
 
-                    if (node.tree_per_frame.size() < 2)
+                    if ((int)node.tree_per_frame.size() < 2)
                     {
-                        to_remove.push_back(v);
+                        // Node slides out of the window: convert to world frame and park it.
+                        Eigen::Vector3d pts_i   = anchor_pt * node.estimated_depth;
+                        Eigen::Vector3d w_pts_i = marg_R * pts_i + marg_P;
+                        removed_obs.point = w_pts_i;   // overwrite with world-frame position
+                        node.tree_per_frame.clear();
+                        node.tree_per_frame.push_back(removed_obs);
+                        node.solve_flag = 3;
                         tree_features_removed++;
                     }
                     else
@@ -1519,12 +1532,17 @@ void FeatureManager::removeBackShiftDepth(Eigen::Matrix3d marg_R, Eigen::Vector3
                     }
                 }
             }
-            for (int i = (int)to_remove.size() - 1; i >= 0; --i)
-                boost::remove_vertex(to_remove[i], model_tree);
         }
+        // Remove trees where every node is dormant (the whole tree has left the window).
         t_feature.erase(
             std::remove_if(t_feature.begin(), t_feature.end(),
-                           [](const ModelTree &t){ return boost::num_vertices(t) == 0; }),
+                [](const ModelTree &t) {
+                    const int n = (int)boost::num_vertices(t);
+                    if (n == 0) return true;
+                    for (int v = 0; v < n; ++v)
+                        if (t[v].solve_flag != 3) return false;
+                    return true;
+                }),
             t_feature.end());
     }
 
@@ -1614,7 +1632,7 @@ void FeatureManager::removeBack()
                 {
                     node.tree_per_frame.erase(node.tree_per_frame.begin());
                     for (auto &fpf : node.tree_per_frame) fpf.frame--;
-                    if (node.tree_per_frame.empty())
+                    if ((int)node.tree_per_frame.size() < 2)
                     {
                         to_remove.push_back(v);
                         tree_features_removed++;
@@ -1624,11 +1642,11 @@ void FeatureManager::removeBack()
                 }
             }
             for (int i = (int)to_remove.size() - 1; i >= 0; --i)
-                boost::remove_vertex(to_remove[i], model_tree);
+                node_bypass(model_tree, to_remove[i]);
         }
         t_feature.erase(
             std::remove_if(t_feature.begin(), t_feature.end(),
-                           [](const ModelTree &t){ return boost::num_vertices(t) == 0; }),
+                           [](const ModelTree &t){ return boost::num_vertices(t) < 2; }),
             t_feature.end());
     }
 
