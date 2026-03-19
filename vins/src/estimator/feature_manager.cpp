@@ -8,7 +8,6 @@
  *******************************************************/
 
 #include "feature_manager.h"
-#include <boost/graph/topological_sort.hpp>
 
 int FeaturePerId::endFrame()
 {
@@ -476,30 +475,29 @@ void FeatureManager::removeFailures()
     {
         for (auto &model_tree : t_feature)
         {
-            // Get topological order (parents before children) so that when we
-            // remove a node and bridge parent→children, the children's in-edge
-            // is already the bridged parent when they are processed next.
-            // topological_sort returns reverse order, so we reverse it.
-            std::vector<int> topo;
-            boost::topological_sort(model_tree, std::back_inserter(topo));
-            std::reverse(topo.begin(), topo.end());
+            // Collect failed vertices, highest index first.
+            // Processing highest-first keeps all lower indices stable after
+            // each remove_vertex call, so no index adjustment is needed.
+            std::vector<int> to_remove;
+            for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
+                if (model_tree[v].solve_flag == 2)
+                    to_remove.push_back(v);
+            std::sort(to_remove.rbegin(), to_remove.rend());
 
-            for (int i = 0; i < (int)topo.size(); )
+            for (int v : to_remove)
             {
-                int v = topo[i];
-                if (model_tree[v].solve_flag != 2) { ++i; continue; }
-
-                // Direct parent (may already be a bridge added in an earlier step).
+                // Bridge: connect direct parent to each direct child before removing.
+                // Any removal order is correct — each node processes the up-to-date
+                // graph, so bridges added in earlier steps are already visible.
                 int parent = -1;
                 {
                     auto [iei, iei_end] = boost::in_edges(v, model_tree);
                     if (iei != iei_end)
                         parent = (int)boost::source(*iei, model_tree);
                 }
-
-                // Collect children before adding edges (avoid iterator invalidation).
                 if (parent != -1)
                 {
+                    // Collect children before adding edges to avoid iterator invalidation.
                     std::vector<int> children;
                     auto [oei, oei_end] = boost::out_edges(v, model_tree);
                     for (; oei != oei_end; ++oei)
@@ -510,13 +508,8 @@ void FeatureManager::removeFailures()
 
                 boost::remove_vertex(v, model_tree);
                 tree_features_removed++;
-
-                // remove_vertex(v) shifts every index > v down by 1.
-                // Update the remaining entries in topo accordingly.
-                topo.erase(topo.begin() + i);
-                for (int j = i; j < (int)topo.size(); ++j)
-                    if (topo[j] > v) topo[j]--;
-                // Do not advance i: the element now at position i is the next one.
+                // BGL updates all edge src/tgt descriptors > v automatically.
+                // Remaining to_remove entries are all < v, so they need no adjustment.
             }
         }
         // Remove trees that became empty.
