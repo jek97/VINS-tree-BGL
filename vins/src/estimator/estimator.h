@@ -111,6 +111,7 @@ class Estimator
     std::mutex mProcess;
     std::mutex mBuf;
     std::mutex mPropagate;
+    std::mutex Mlmodel;   // protects last_model_forest
     queue<pair<double, Eigen::Vector3d>> accBuf;
     queue<pair<double, Eigen::Vector3d>> gyrBuf;
     queue<pair<double, map<int, vector<pair<int, Eigen::Matrix<double, 7, 1> > > > > > featureBuf;
@@ -203,6 +204,8 @@ class Estimator
     Vector3d        prev_deb_Bgs[(WINDOW_SIZE + 1)];
 
     list<FeaturePerId> prev_deb_feature;
-    
+
     ModelForest prev_deb_t_feature;
+
+    ObservedForest last_model_forest;  // world-frame summary of t_feature, rebuilt after every removal pass
 };
