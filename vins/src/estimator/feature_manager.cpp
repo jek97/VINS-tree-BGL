@@ -1367,8 +1367,7 @@ void FeatureManager::triangulate(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vec
                 ModelNode &node = model_tree[v];
                 if (node.estimated_depth > 0)
                     continue;
-                node.used_num = node.tree_per_frame.size();
-                if (node.used_num < 3)
+                if (node.tree_per_frame.empty())
                     continue;
                 double depth = node.tree_per_frame[0].point.norm();
                 node.estimated_depth = (depth > 0) ? depth : INIT_DEPTH;
