@@ -68,10 +68,7 @@ class FeatureTracker
 public:
     FeatureTracker();
     map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> trackImage(double _cur_time, const cv::Mat &_img, const cv::Mat &_img1 = cv::Mat());
-    pair<double, vector<pair<int, ObservedTree>>> trackForest(double _cur_time, ObservedForest &cur_forest,
-        const ObservedForest& model_forest,
-        const Eigen::Matrix3d& last_R, const Eigen::Vector3d& last_P,
-        const Eigen::Matrix3d& last_ric, const Eigen::Vector3d& last_tic);
+    pair<double, vector<pair<int, ObservedTree>>> trackForest(double _cur_time, ObservedForest &cur_forest);
     void evaluate_fd(ObservedForest &forest);
     int hammingDistance(const std::vector<uint8_t>& fd_brief1, const std::vector<uint8_t>& fd_brief2);
     pair<double, vector<pair<pair<string, string>, double>>> isomorphism(ObservedTree tree_0, ObservedTree tree_1);
@@ -152,6 +149,11 @@ public:
     bool hasPrediction;
 
     ObservedForest prev_forest;
+    ObservedForest last_model_forest; // world-frame model forest from the estimator, used for matching
+    Eigen::Matrix3d last_R;           // last known robot rotation (world←IMU)
+    Eigen::Vector3d last_P;           // last known robot position in world frame
+    Eigen::Matrix3d last_ric;         // camera←IMU rotation extrinsic
+    Eigen::Vector3d last_tic;         // camera←IMU translation extrinsic
     double _prev_time;
     int new_ids = 0;
 

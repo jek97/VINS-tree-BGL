@@ -729,23 +729,28 @@ pair<vector<vector<double>>, vector<vector<double>>> FeatureTracker::tree_bipart
         {
             const ObservedNode& nr = graph_R[j];
 
-            // extract point position
-            Eigen::Vector3d p_0(nl.x, nl.y, nl.z);
-            Eigen::Vector3d p_1(nr.x, nr.y, nr.z);
+            // graph_L (last_model_forest) is in world frame.
+            Eigen::Vector3d p_0_w(nl.x, nl.y, nl.z);
 
-            // project them in the image
-            Eigen::Vector3d prev_node_uv = K_mat * p_0;
+            // graph_R (cur_forest) is in camera frame → project to world frame locally.
+            Eigen::Vector3d p_1_cam(nr.x, nr.y, nr.z);
+            Eigen::Vector3d p_1_w = last_R * (last_ric * p_1_cam + last_tic) + last_P;
+
+            // For image-space distance project model node (world) back to camera frame.
+            Eigen::Vector3d p_0_cam = last_ric.transpose() * (last_R.transpose() * (p_0_w - last_P) - last_tic);
+
+            Eigen::Vector3d prev_node_uv = K_mat * p_0_cam;
             Eigen::Vector2d prev_node_2d_p(prev_node_uv[0]/prev_node_uv[2], prev_node_uv[1]/prev_node_uv[2]);
 
-            Eigen::Vector3d cur_node_uv = K_mat * p_1;
+            Eigen::Vector3d cur_node_uv = K_mat * p_1_cam;
             Eigen::Vector2d cur_node_2d_p(cur_node_uv[0]/cur_node_uv[2], cur_node_uv[1]/cur_node_uv[2]);
 
-            // distance
+            // image-space distance
             double dist_2d = (cur_node_2d_p - prev_node_2d_p).norm();
 
-            // weight it based on the average depth of the points
-            double prev_depth = p_0.norm();
-            double cur_depth = p_1.norm();
+            // weight by depth in camera frame
+            double prev_depth = p_0_cam.norm();
+            double cur_depth  = p_1_cam.norm();
 
             // get their topological feature descriptor
             Eigen::VectorXd prev_topological_fd = Eigen::Map<const Eigen::VectorXd>(nl.fd.data(), nl.fd.size());
@@ -758,11 +763,11 @@ pair<vector<vector<double>>, vector<vector<double>>> FeatureTracker::tree_bipart
             double custom_dist = (dist_2d * ((prev_depth + cur_depth) / 2)) + topological_distance;
             cost_mat[i + 1][nL + 1 + j] = custom_dist;
 
-            // capacity matrix
-            if((p_0 - p_1).norm() <= TREE_METRIC_MATCH_THRESH) // if the position error is too high assign 0 capacity on that edge, avoiding the match
-                capacity_mat[i + 1][nL + 1 + j] = 1; // edges from L to R
+            // capacity: use world-frame 3D distance for position gate
+            if((p_0_w - p_1_w).norm() <= TREE_METRIC_MATCH_THRESH)
+                capacity_mat[i + 1][nL + 1 + j] = 1;
             else
-                capacity_mat[i + 1][nL + 1 + j] = 0; // edges from L to R
+                capacity_mat[i + 1][nL + 1 + j] = 0;
         }
     }
 
@@ -1159,11 +1164,7 @@ cv::Scalar FeatureTracker::genRandomColor()
     return cv::Scalar(b, g, r);
 }
 
-pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(
-    double _cur_time, ObservedForest &cur_forest,
-    const ObservedForest& model_forest,
-    const Eigen::Matrix3d& last_R, const Eigen::Vector3d& last_P,
-    const Eigen::Matrix3d& last_ric, const Eigen::Vector3d& last_tic)
+pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double _cur_time, ObservedForest &cur_forest)
 {
     // save the K matrix for point visualization (in track tree)
     if(!K_mat_f)
@@ -1176,40 +1177,20 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(
     evaluate_fd(cur_forest);
 
     vector<pair<int, vector<pair<pair<string, string>, double>>>> complete_matches;
-    if(model_forest.size() > 0)
+    if(last_model_forest.size() > 0)
     {
-        // Project model_forest nodes from world frame into the current camera frame
-        // using the last available robot pose (last_R, last_P) and camera extrinsics (last_ric, last_tic).
-        ObservedForest projected_model_forest;
-        for (const ObservedTree& model_tree : model_forest)
-        {
-            ObservedTree proj_tree;
-            for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
-            {
-                ObservedNode obs = model_tree[v];
-                Eigen::Vector3d pts_w(obs.x, obs.y, obs.z);
-                Eigen::Vector3d pts_imu = last_R.transpose() * (pts_w - last_P);
-                Eigen::Vector3d pts_cam = last_ric.transpose() * (pts_imu - last_tic);
-                obs.x = pts_cam.x(); obs.y = pts_cam.y(); obs.z = pts_cam.z();
-                boost::add_vertex(obs, proj_tree);
-            }
-            auto [ei, ei_end] = boost::edges(model_tree);
-            for (; ei != ei_end; ++ei)
-                boost::add_edge(boost::source(*ei, model_tree), boost::target(*ei, model_tree), proj_tree);
-            projected_model_forest.push_back(std::move(proj_tree));
-        }
+        evaluate_fd(last_model_forest);
 
-        evaluate_fd(projected_model_forest);
-
-        // run matching between cur_forest and projected model forest
+        // run matching: cur_forest (camera frame) vs last_model_forest (world frame).
+        // tree_bipartite_capacity_cost_evaluation handles the per-node frame conversion internally.
         vector<vector<pair<double, vector<pair<pair<string, string>, double>>>>> tree_matches(
             cur_forest.size(),
             std::vector<std::pair<double, std::vector<std::pair<std::pair<std::string, std::string>, double>>>>(
-                projected_model_forest.size(), {0.0, {{{"", ""}, 0.0}}}));
+                last_model_forest.size(), {0.0, {{{"", ""}, 0.0}}}));
 
         for(size_t i = 0; i < cur_forest.size(); ++i)
-            for(size_t j = 0; j < projected_model_forest.size(); ++j)
-                tree_matches[i][j] = isomorphism(cur_forest[i], projected_model_forest[j]);
+            for(size_t j = 0; j < last_model_forest.size(); ++j)
+                tree_matches[i][j] = isomorphism(cur_forest[i], last_model_forest[j]);
 
         auto [capacity, cost] = forest_bipartite_capacity_cost_evaluation(tree_matches);
         FeatureTracker::BpMatcher matcher(capacity.size());
@@ -1236,7 +1217,7 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(
         {
             if (filtered_matches[i].first != -1)
             {
-                const ObservedTree& model_tree = projected_model_forest[filtered_matches[i].first];
+                const ObservedTree& model_tree = last_model_forest[filtered_matches[i].first];
                 for (const auto& match : filtered_matches[i].second)
                 {
                     const int model_vd = find_vd(model_tree,    match.first.second);
@@ -1246,13 +1227,17 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(
                     const ObservedNode& pn = model_tree[model_vd];
                     ObservedNode& cn = cur_forest[i][cur_vd];
 
+                    // pn is world-frame; project to camera frame for velocity in camera frame
+                    Eigen::Vector3d pn_w(pn.x, pn.y, pn.z);
+                    Eigen::Vector3d pn_cam = last_ric.transpose() * (last_R.transpose() * (pn_w - last_P) - last_tic);
+
                     oss << "    model node " << pn.ex_id << " cur node " << cn.ex_id << " new id " << pn.id << std::endl;
                     ++n_f_match;
                     cn.id        = pn.id;
                     cn.track_cnt = pn.track_cnt + 1;
-                    cn.v_x = (cn.x - pn.x) / (_cur_time - _prev_time);
-                    cn.v_y = (cn.y - pn.y) / (_cur_time - _prev_time);
-                    cn.v_z = (cn.z - pn.z) / (_cur_time - _prev_time);
+                    cn.v_x = (cn.x - pn_cam.x()) / (_cur_time - _prev_time);
+                    cn.v_y = (cn.y - pn_cam.y()) / (_cur_time - _prev_time);
+                    cn.v_z = (cn.z - pn_cam.z()) / (_cur_time - _prev_time);
                 }
             }
         }
@@ -1266,7 +1251,7 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(
         oss << "Total: " << n_match << " filtered " << n_f_match << std::endl;
         logMessage(oss.str());
 
-        // visualize the results
+        // visualize the results — draw last_model_forest nodes projected to camera frame
         Eigen::Matrix3d R_lcam_tree = T_lcam_tree.block<3, 3>(0, 0);
         Eigen::Vector3d P_lcam_tree = T_lcam_tree.block<3, 1>(0, 3);
         Eigen::Matrix3d R_tree_lcam = R_lcam_tree.transpose();
@@ -1277,15 +1262,33 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(
         Eigen::Matrix4d T_tree_lcam;
         T_tree_lcam << T_prov, rowVec;
 
+        // Build a camera-frame copy of last_model_forest only for visualization
+        ObservedForest vis_forest;
+        for (const ObservedTree& mt : last_model_forest)
+        {
+            ObservedTree vt;
+            for (int v = 0; v < (int)boost::num_vertices(mt); ++v)
+            {
+                ObservedNode obs = mt[v];
+                Eigen::Vector3d pts_cam = last_ric.transpose() * (last_R.transpose() * (Eigen::Vector3d(obs.x, obs.y, obs.z) - last_P) - last_tic);
+                obs.x = pts_cam.x(); obs.y = pts_cam.y(); obs.z = pts_cam.z();
+                boost::add_vertex(obs, vt);
+            }
+            auto [ei, ei_end] = boost::edges(mt);
+            for (; ei != ei_end; ++ei)
+                boost::add_edge(boost::source(*ei, mt), boost::target(*ei, mt), vt);
+            vis_forest.push_back(std::move(vt));
+        }
+
         vector<cv::Scalar> match_circle_colors;
         vector<cv::Scalar> match_line_colors;
-        for(size_t i = 0; i < projected_model_forest.size(); ++i)
+        for(size_t i = 0; i < vis_forest.size(); ++i)
         {
             match_circle_colors.push_back(genRandomColor());
             match_line_colors.push_back(genRandomColor());
         }
 
-        cv::Mat match_img_ = drawForest(projected_model_forest, T_tree_lcam, match_circle_colors, match_line_colors);
+        cv::Mat match_img_ = drawForest(vis_forest, T_tree_lcam, match_circle_colors, match_line_colors);
 
         auto project = [&](double x, double y, double z) -> cv::Point {
             Eigen::Vector3d p3d = (T_tree_lcam * Eigen::Vector4d(x, y, z, 1)).head<3>();
@@ -1297,7 +1300,8 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(
         {
             if (filtered_matches[i].first != -1)
             {
-                const ObservedTree& model_tree = projected_model_forest[filtered_matches[i].first];
+                const ObservedTree& vis_tree = vis_forest[filtered_matches[i].first];
+                const ObservedTree& model_tree = last_model_forest[filtered_matches[i].first];
                 for (const auto& match : filtered_matches[i].second)
                 {
                     const int model_vd = find_vd(model_tree,    match.first.second);
@@ -1305,7 +1309,7 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(
                     if (model_vd < 0 || cur_vd < 0) continue;
 
                     cv::arrowedLine(match_img_,
-                        project(model_tree[model_vd].x, model_tree[model_vd].y, model_tree[model_vd].z),
+                        project(vis_tree[model_vd].x, vis_tree[model_vd].y, vis_tree[model_vd].z),
                         project(cur_forest[i][cur_vd].x, cur_forest[i][cur_vd].y, cur_forest[i][cur_vd].z),
                         cv::Scalar(0, 255, 0), 1, 8, 0, 0.2);
                 }

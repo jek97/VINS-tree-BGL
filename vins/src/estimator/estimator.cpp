@@ -283,14 +283,15 @@ void Estimator::inputForest(double t, std::pair<bool, ObservedForest> &forest)
     if(forest.first) // if we received a valid forest
     {
         t_featureFrame.first = true;
-        ObservedForest model_forest_copy;
         {
             std::lock_guard<std::mutex> lk(Mlmodel);
-            model_forest_copy = last_model_forest;
+            featureTracker.last_model_forest = last_model_forest;
         }
-        t_featureFrame.second = featureTracker.trackForest(t, forest.second, model_forest_copy,
-                                                           Rs[WINDOW_SIZE], Ps[WINDOW_SIZE],
-                                                           ric[0], tic[0]);
+        featureTracker.last_R   = Rs[WINDOW_SIZE];
+        featureTracker.last_P   = Ps[WINDOW_SIZE];
+        featureTracker.last_ric = ric[0];
+        featureTracker.last_tic = tic[0];
+        t_featureFrame.second = featureTracker.trackForest(t, forest.second);
         auto [joinedImage, cam_info, match_time] = featureTracker.getTreeMatch();
         pubTreeMatchImage(joinedImage, cam_info, match_time);
     }
