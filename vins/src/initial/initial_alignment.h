@@ -36,13 +36,7 @@ class ImageFrame
         {
             points = _points;
         };
-        ImageFrame(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>>& _points, const pair<double, vector<TreeNode>> &_tree_points , double _t):t{_t},is_key_frame{false}
-        {
-            points = _points;
-            tree_points = _tree_points;
-        };
         map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>> > > points;
-        pair<double, vector<TreeNode>> tree_points;
         double t;
         Matrix3d R;
         Vector3d T;

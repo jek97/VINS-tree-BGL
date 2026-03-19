@@ -952,7 +952,7 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
     logMessage(oss.str());
     ///// LOG /////
 
-    ImageFrame imageframe(image, tree, header); // re-associate the feature frame to its time, actually this variable has the same datastructure of the feature
+    ImageFrame imageframe(image, header); // re-associate the feature frame to its time, actually this variable has the same datastructure of the feature
     imageframe.pre_integration = tmp_pre_integration; // add to the imageframe variable the accellerations preintegreted evaluated before
     all_image_frame.insert(make_pair(header, imageframe)); // add the imageframe to all_image_frame variable
     tmp_pre_integration = new IntegrationBase{acc_0, gyr_0, Bas[frame_count], Bgs[frame_count]}; // reset tmp_pre_integration for next iterations
@@ -1107,7 +1107,7 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
             oss.str("");
             oss.clear();
             oss << "---------------------------------------------- tree buffer ------------------------------------------------------------" << std::endl;
-            for (auto &_mt : prev_deb_model_forest)
+            for (auto &_mt : prev_deb_t_feature)
             for (int _v = 0; _v < (int)boost::num_vertices(_mt); ++_v)
             {
                 auto &it_per_id = _mt[_v];
@@ -1147,7 +1147,7 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
             oss.str("");
             oss.clear();
             oss << "---------------------------------------------- tree buffer ------------------------------------------------------------" << std::endl;
-            for (auto &_mt : f_manager.m_model_forest)
+            for (auto &_mt : f_manager.t_feature)
             for (int _v = 0; _v < (int)boost::num_vertices(_mt); ++_v)
             {
                 auto &it_per_id = _mt[_v];
@@ -1202,7 +1202,7 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
         for(const auto& f : f_manager.feature){
             prev_deb_feature.push_back(f);
         }
-        prev_deb_model_forest = f_manager.m_model_forest;
+        prev_deb_t_feature = f_manager.t_feature;
         /////// DEBUG //////////
         
         slideWindow(); // slide all the quantities in the window
@@ -1724,7 +1724,7 @@ void Estimator::optimization()
     double avg_t_n_obs = 0;
     int t_count = 0;
     int t_deb_c = 0;
-    for (auto &_mt : f_manager.m_model_forest)
+    for (auto &_mt : f_manager.t_feature)
     for (int _v = 0; _v < (int)boost::num_vertices(_mt); ++_v)
     {
         auto &it_per_id = _mt[_v];
@@ -1917,7 +1917,7 @@ void Estimator::optimization()
     if (USE_TREE)
     {
         int t_feature_index = -1;
-        for (auto &_mt : f_manager.m_model_forest)
+        for (auto &_mt : f_manager.t_feature)
         for (int _v = 0; _v < (int)boost::num_vertices(_mt); ++_v)
         {
             auto &it_per_id = _mt[_v];
@@ -2104,7 +2104,7 @@ void Estimator::optimization()
     
     if (USE_TREE) 
     {   
-        for (auto &_mt : f_manager.m_model_forest)
+        for (auto &_mt : f_manager.t_feature)
         for (int _v = 0; _v < (int)boost::num_vertices(_mt); ++_v)
         {
             auto &it_per_id = _mt[_v];
@@ -2353,7 +2353,7 @@ void Estimator::optimization()
     if (USE_TREE)
     {
         int t_feature_index = -1;
-        for (auto &_mt : f_manager.m_model_forest)
+        for (auto &_mt : f_manager.t_feature)
         for (int _v = 0; _v < (int)boost::num_vertices(_mt); ++_v)
         {
             auto &it_per_id = _mt[_v];
@@ -2526,7 +2526,7 @@ void Estimator::optimization()
             if (USE_TREE)
             {
                 int t_feature_index = -1;
-                for (auto &_mt : f_manager.m_model_forest)
+                for (auto &_mt : f_manager.t_feature)
                 for (int _v = 0; _v < (int)boost::num_vertices(_mt); ++_v)
                 {
                     auto &it_per_id = _mt[_v];
@@ -2861,7 +2861,7 @@ void Estimator::predictPtsInNextFrame()
     if (USE_TREE) 
     {   
         map<int, Eigen::Vector3d> predict_t_Pts;
-        for (auto &_mt : f_manager.m_model_forest)
+        for (auto &_mt : f_manager.t_feature)
         for (int _v = 0; _v < (int)boost::num_vertices(_mt); ++_v)
         {
             auto &it_per_id = _mt[_v];
@@ -3025,7 +3025,7 @@ void Estimator::outliersRejection(set<int> &removeIndex, set<int> &remove_tree_I
     oss << "tree features:" << std::endl;
     if (USE_TREE)
     {   
-        for (auto &_mt : f_manager.m_model_forest)
+        for (auto &_mt : f_manager.t_feature)
         for (int _v = 0; _v < (int)boost::num_vertices(_mt); ++_v)
         {
             auto &it_per_id = _mt[_v];

@@ -33,7 +33,7 @@ void FeatureManager::setRic(Matrix3d _ric[])
 void FeatureManager::clearState()
 {
     feature.clear();
-    m_model_forest.clear();
+    t_feature.clear();
 }
 
 int FeatureManager::getFeatureCount()
@@ -55,7 +55,7 @@ int FeatureManager::getFeatureCount()
 int FeatureManager::get_tree_FeatureCount()
 {
     int cnt = 0;
-    for (auto &tree : m_model_forest)
+    for (auto &tree : t_feature)
         for (int v = 0; v < (int)boost::num_vertices(tree); ++v)
         {
             ModelNode &node = tree[v];
@@ -153,7 +153,7 @@ bool FeatureManager::addFeatureTreeCheckParallax(int frame_count, const double h
         for (; ei != ei_end; ++ei)
             boost::add_edge(boost::source(*ei, obs_tree), boost::target(*ei, obs_tree), model_tree);
 
-        m_model_forest.push_back(std::move(model_tree));
+        t_feature.push_back(std::move(model_tree));
     }
 
     ///// LOG /////
@@ -181,7 +181,7 @@ bool FeatureManager::addFeatureTreeCheckParallax(int frame_count, const double h
         }
     }
     // parallax contribution from tree nodes that have observations at frame_count-2 and frame_count-1
-    for (const auto &model_tree : m_model_forest)
+    for (const auto &model_tree : t_feature)
         for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
         {
             const ModelNode &node = model_tree[v];
@@ -422,7 +422,7 @@ void FeatureManager::setDepth(const VectorXd &x)
 void FeatureManager::set_tree_Depth(const VectorXd &x)
 {
     int t_feature_index = -1;
-    for (auto &model_tree : m_model_forest)
+    for (auto &model_tree : t_feature)
         for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
         {
             ModelNode &node = model_tree[v];
@@ -473,7 +473,7 @@ void FeatureManager::removeFailures()
     }
     if (USE_TREE)
     {
-        for (auto &model_tree : m_model_forest)
+        for (auto &model_tree : t_feature)
         {
             // collect vertices to remove (in reverse order to keep indices stable)
             vector<int> to_remove;
@@ -487,10 +487,10 @@ void FeatureManager::removeFailures()
             }
         }
         // remove trees that became empty
-        m_model_forest.erase(
-            std::remove_if(m_model_forest.begin(), m_model_forest.end(),
+        t_feature.erase(
+            std::remove_if(t_feature.begin(), t_feature.end(),
                            [](const ModelTree &t){ return boost::num_vertices(t) == 0; }),
-            m_model_forest.end());
+            t_feature.end());
     }
     ///// LOG /////
     std::ostringstream oss1;
@@ -523,7 +523,7 @@ void FeatureManager::clearDepth()
         it_per_id.estimated_depth = -1;
 
     if (USE_TREE)
-        for (auto &model_tree : m_model_forest)
+        for (auto &model_tree : t_feature)
             for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
                 model_tree[v].estimated_depth = -1;
 }
@@ -550,7 +550,7 @@ VectorXd FeatureManager::get_tree_DepthVector()
 {
     VectorXd dep_vec(get_tree_FeatureCount());
     int feature_index = -1;
-    for (auto &model_tree : m_model_forest)
+    for (auto &model_tree : t_feature)
         for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
         {
             ModelNode &node = model_tree[v];
@@ -1072,7 +1072,7 @@ void FeatureManager::initFramePoseByPnP(int frameCnt, Vector3d Ps[], Matrix3d Rs
 
             // run icp p2p or p2l closed form (SVD) to get an initial estimate: 
             // get points correspondences for all the features that apear in the current frame and their first observations
-            for (const auto &model_tree : m_model_forest)
+            for (const auto &model_tree : t_feature)
                 for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
                 {
                     const ModelNode &node = model_tree[v];
@@ -1355,7 +1355,7 @@ void FeatureManager::triangulate(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vec
 
     if (USE_TREE)
     {
-        for (auto &model_tree : m_model_forest)
+        for (auto &model_tree : t_feature)
             for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
             {
                 ModelNode &node = model_tree[v];
@@ -1393,7 +1393,7 @@ void FeatureManager::removeOutlier(set<int> &outlierIndex, set<int> &tree_outlie
     oss << "tree features:" << std::endl;
     if (USE_TREE)
     {
-        for (auto &model_tree : m_model_forest)
+        for (auto &model_tree : t_feature)
         {
             vector<int> to_remove;
             for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
@@ -1405,10 +1405,10 @@ void FeatureManager::removeOutlier(set<int> &outlierIndex, set<int> &tree_outlie
             for (int i = (int)to_remove.size() - 1; i >= 0; --i)
                 boost::remove_vertex(to_remove[i], model_tree);
         }
-        m_model_forest.erase(
-            std::remove_if(m_model_forest.begin(), m_model_forest.end(),
+        t_feature.erase(
+            std::remove_if(t_feature.begin(), t_feature.end(),
                            [](const ModelTree &t){ return boost::num_vertices(t) == 0; }),
-            m_model_forest.end());
+            t_feature.end());
     }
     logMessage(oss.str());
     ///// LOG /////
@@ -1480,7 +1480,7 @@ void FeatureManager::removeBackShiftDepth(Eigen::Matrix3d marg_R, Eigen::Vector3
 
     if (USE_TREE)
     {
-        for (auto &model_tree : m_model_forest)
+        for (auto &model_tree : t_feature)
         {
             vector<int> to_remove;
             for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
@@ -1516,10 +1516,10 @@ void FeatureManager::removeBackShiftDepth(Eigen::Matrix3d marg_R, Eigen::Vector3
             for (int i = (int)to_remove.size() - 1; i >= 0; --i)
                 boost::remove_vertex(to_remove[i], model_tree);
         }
-        m_model_forest.erase(
-            std::remove_if(m_model_forest.begin(), m_model_forest.end(),
+        t_feature.erase(
+            std::remove_if(t_feature.begin(), t_feature.end(),
                            [](const ModelTree &t){ return boost::num_vertices(t) == 0; }),
-            m_model_forest.end());
+            t_feature.end());
     }
 
     ///// LOG /////
@@ -1593,7 +1593,7 @@ void FeatureManager::removeBack()
 
     if (USE_TREE)
     {
-        for (auto &model_tree : m_model_forest)
+        for (auto &model_tree : t_feature)
         {
             vector<int> to_remove;
             for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
@@ -1620,10 +1620,10 @@ void FeatureManager::removeBack()
             for (int i = (int)to_remove.size() - 1; i >= 0; --i)
                 boost::remove_vertex(to_remove[i], model_tree);
         }
-        m_model_forest.erase(
-            std::remove_if(m_model_forest.begin(), m_model_forest.end(),
+        t_feature.erase(
+            std::remove_if(t_feature.begin(), t_feature.end(),
                            [](const ModelTree &t){ return boost::num_vertices(t) == 0; }),
-            m_model_forest.end());
+            t_feature.end());
     }
 
     ///// LOG /////
@@ -1701,7 +1701,7 @@ void FeatureManager::removeFront(int frame_count)
     vector<int> removed_id;
     if (USE_TREE)
     {
-        for (auto &model_tree : m_model_forest)
+        for (auto &model_tree : t_feature)
         {
             vector<int> to_remove;
             for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
@@ -1743,10 +1743,10 @@ void FeatureManager::removeFront(int frame_count)
             for (int i = (int)to_remove.size() - 1; i >= 0; --i)
                 boost::remove_vertex(to_remove[i], model_tree);
         }
-        m_model_forest.erase(
-            std::remove_if(m_model_forest.begin(), m_model_forest.end(),
+        t_feature.erase(
+            std::remove_if(t_feature.begin(), t_feature.end(),
                            [](const ModelTree &t){ return boost::num_vertices(t) == 0; }),
-            m_model_forest.end());
+            t_feature.end());
     }
     ///// LOG /////
     std::ostringstream oss1;

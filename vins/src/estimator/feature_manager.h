@@ -89,25 +89,9 @@ class FeaturePerId
     int endFrame();
 };
 
-// LEGACY — kept until full migration to ModelTree is complete
 class TreePerFrame
 {
   public:
-    TreePerFrame(const TreeNode &_tree, double td, int _frame_count)
-    {
-        point.x() = _tree.x;
-        point.y() = _tree.y;
-        point.z() = _tree.z;
-        velocity.x() = _tree.v_x;
-        velocity.y() = _tree.v_y;
-        velocity.z() = _tree.v_z;
-        n.x() = _tree.n_x;
-        n.y() = _tree.n_y;
-        n.z() = _tree.n_z;
-        track_cnt = _tree.track_cnt;
-        cur_td = td;
-        frame = _frame_count;
-    }
     TreePerFrame(const ObservedNode &_node, double td, int _frame_count)
     {
         point.x() = _node.x;
@@ -127,28 +111,7 @@ class TreePerFrame
     int track_cnt;
 };
 
-// LEGACY — kept until full migration to ModelTree is complete
-class TreePerId
-{
-  public:
-    const int feature_id;
-    int start_frame;
-    vector<TreePerFrame> tree_per_frame;
-    int used_num;
-    double estimated_depth;
-    int solve_flag; // 0 haven't solve yet; 1 solve succ; 2 solve fail;
-
-    TreePerId(int _feature_id, int _start_frame)
-        : feature_id(_feature_id), start_frame(_start_frame),
-          used_num(0), estimated_depth(-1.0), solve_flag(0)
-    {
-    }
-
-    int endFrame();
-    bool has_frame(int frame) const;
-};
-
-// Vertex bundle for the estimator-side graph (replaces TreePerId).
+// Vertex bundle for the estimator-side graph.
 struct ModelNode
 {
     const int feature_id;
@@ -221,7 +184,7 @@ class FeatureManager
     void removeOutlier(set<int> &outlierIndex, set<int> &tree_outlierIndex);
     void logMessage(const std::string& message); // DEBUG
     list<FeaturePerId> feature;
-    ModelForest m_model_forest;
+    ModelForest t_feature;
     int last_track_num;
     double last_average_parallax;
     int new_feature_num;
