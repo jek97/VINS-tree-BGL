@@ -475,18 +475,50 @@ void FeatureManager::removeFailures()
     {
         for (auto &model_tree : t_feature)
         {
-            // collect vertices to remove (in reverse order to keep indices stable)
-            vector<int> to_remove;
+            // Collect vertices to remove into a set for O(1) membership checks.
+            std::set<int> remove_set;
             for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
                 if (model_tree[v].solve_flag == 2)
-                    to_remove.push_back(v);
-            for (int i = (int)to_remove.size() - 1; i >= 0; --i)
+                    remove_set.insert(v);
+
+            // Process in descending order: removing the highest index first leaves
+            // all lower indices stable, so remove_set entries stay valid throughout.
+            std::vector<int> to_remove(remove_set.rbegin(), remove_set.rend());
+            for (int v : to_remove)
             {
-                boost::remove_vertex(to_remove[i], model_tree);
+                // Surviving parent: the unique in-neighbour that is not itself being removed.
+                int parent = -1;
+                {
+                    auto [iei, iei_end] = boost::in_edges(v, model_tree);
+                    for (; iei != iei_end; ++iei)
+                    {
+                        int src = (int)boost::source(*iei, model_tree);
+                        if (!remove_set.count(src)) { parent = src; break; }
+                    }
+                }
+
+                // Surviving children: out-neighbours not being removed.
+                std::vector<int> surviving_children;
+                {
+                    auto [oei, oei_end] = boost::out_edges(v, model_tree);
+                    for (; oei != oei_end; ++oei)
+                    {
+                        int tgt = (int)boost::target(*oei, model_tree);
+                        if (!remove_set.count(tgt))
+                            surviving_children.push_back(tgt);
+                    }
+                }
+
+                // Bridge: connect surviving parent directly to each surviving child.
+                if (parent != -1)
+                    for (int child : surviving_children)
+                        boost::add_edge(parent, child, model_tree);
+
+                boost::remove_vertex(v, model_tree);
                 tree_features_removed++;
             }
         }
-        // remove trees that became empty
+        // Remove trees that became empty.
         t_feature.erase(
             std::remove_if(t_feature.begin(), t_feature.end(),
                            [](const ModelTree &t){ return boost::num_vertices(t) == 0; }),

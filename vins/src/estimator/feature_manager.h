@@ -143,7 +143,7 @@ struct ModelNode
 };
 
 using ModelTree   = boost::adjacency_list<
-    boost::vecS, boost::vecS, boost::directedS,
+    boost::vecS, boost::vecS, boost::bidirectionalS,
     ModelNode, boost::no_property
 >;
 using ModelForest = std::vector<ModelTree>;
