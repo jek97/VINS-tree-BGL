@@ -1225,13 +1225,7 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
                     obs.id        = node.feature_id;
                     obs.track_cnt = (int)node.tree_per_frame.size();
 
-                    if (node.solve_flag == 3)
-                    {
-                        // Dormant node: world-frame position already stored in tree_per_frame[0].point.
-                        const Vector3d &wp = node.tree_per_frame[0].point;
-                        obs.x = wp.x(); obs.y = wp.y(); obs.z = wp.z();
-                    }
-                    else if (node.estimated_depth > 0 && !node.tree_per_frame.empty())
+                    if (node.estimated_depth > 0 && !node.tree_per_frame.empty())
                     {
                         // Anchor-point projection: depth along first observation ray.
                         int anchor = node.start_frame;

@@ -119,7 +119,7 @@ struct ModelNode
     vector<TreePerFrame> tree_per_frame;
     int    used_num        = 0;
     double estimated_depth = -1.0;
-    int    solve_flag      = 0;    // 0 = unsolved; 1 = success; 2 = failed; 3 = marginalized/dormant (slid out of window; tree_per_frame holds one world-frame obs)
+    int    solve_flag      = 0;    // 0 = unsolved; 1 = success; 2 = failed
 
     ModelNode(int _feature_id, int _start_frame)
         : feature_id(_feature_id), start_frame(_start_frame),
