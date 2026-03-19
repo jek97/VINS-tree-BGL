@@ -473,47 +473,68 @@ void FeatureManager::removeFailures()
     }
     if (USE_TREE)
     {
+        // Helpers: walk up/down through chains of failed nodes to find the first
+        // surviving ancestor and all surviving descendants.
+        // Both use the original graph (no removals yet), so indices are stable.
+
+        std::function<int(int, const ModelTree &, const std::set<int> &)>
+        surviving_ancestor = [&](int v, const ModelTree &g,
+                                 const std::set<int> &rm) -> int
+        {
+            auto [iei, iei_end] = boost::in_edges(v, g);
+            if (iei == iei_end) return -1; // root — no parent
+            int parent = (int)boost::source(*iei, g);
+            return rm.count(parent) ? surviving_ancestor(parent, g, rm) : parent;
+        };
+
+        std::function<void(int, const ModelTree &, const std::set<int> &, std::vector<int> &)>
+        surviving_descendants = [&](int v, const ModelTree &g,
+                                    const std::set<int> &rm,
+                                    std::vector<int> &out)
+        {
+            auto [oei, oei_end] = boost::out_edges(v, g);
+            for (; oei != oei_end; ++oei)
+            {
+                int child = (int)boost::target(*oei, g);
+                if (rm.count(child))
+                    surviving_descendants(child, g, rm, out); // skip failed, go deeper
+                else
+                    out.push_back(child);
+            }
+        };
+
         for (auto &model_tree : t_feature)
         {
-            // Collect vertices to remove into a set for O(1) membership checks.
+            // Collect the set of vertices to remove.
             std::set<int> remove_set;
             for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
                 if (model_tree[v].solve_flag == 2)
                     remove_set.insert(v);
 
-            // Process in descending order: removing the highest index first leaves
-            // all lower indices stable, so remove_set entries stay valid throughout.
+            if (remove_set.empty()) continue;
+
+            // Phase 1 — compute bypass edges on the original graph.
+            // Use a set of pairs to avoid adding the same edge twice (e.g. from
+            // two adjacent failed nodes in a chain both resolving to the same
+            // ancestor→descendant pair).
+            std::set<std::pair<int,int>> new_edges;
+            for (int v : remove_set)
+            {
+                int anc = surviving_ancestor(v, model_tree, remove_set);
+                if (anc == -1) continue;
+                std::vector<int> desc;
+                surviving_descendants(v, model_tree, remove_set, desc);
+                for (int d : desc)
+                    new_edges.emplace(anc, d);
+            }
+            for (auto [src, tgt] : new_edges)
+                boost::add_edge(src, tgt, model_tree);
+
+            // Phase 2 — remove failed vertices, highest index first so that
+            // lower indices remain stable after each remove_vertex call.
             std::vector<int> to_remove(remove_set.rbegin(), remove_set.rend());
             for (int v : to_remove)
             {
-                // Surviving parent: the unique in-neighbour that is not itself being removed.
-                int parent = -1;
-                {
-                    auto [iei, iei_end] = boost::in_edges(v, model_tree);
-                    for (; iei != iei_end; ++iei)
-                    {
-                        int src = (int)boost::source(*iei, model_tree);
-                        if (!remove_set.count(src)) { parent = src; break; }
-                    }
-                }
-
-                // Surviving children: out-neighbours not being removed.
-                std::vector<int> surviving_children;
-                {
-                    auto [oei, oei_end] = boost::out_edges(v, model_tree);
-                    for (; oei != oei_end; ++oei)
-                    {
-                        int tgt = (int)boost::target(*oei, model_tree);
-                        if (!remove_set.count(tgt))
-                            surviving_children.push_back(tgt);
-                    }
-                }
-
-                // Bridge: connect surviving parent directly to each surviving child.
-                if (parent != -1)
-                    for (int child : surviving_children)
-                        boost::add_edge(parent, child, model_tree);
-
                 boost::remove_vertex(v, model_tree);
                 tree_features_removed++;
             }
