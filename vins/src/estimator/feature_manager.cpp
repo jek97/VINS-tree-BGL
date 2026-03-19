@@ -1504,7 +1504,7 @@ void FeatureManager::removeBackShiftDepth(Eigen::Matrix3d marg_R, Eigen::Vector3
                     node.tree_per_frame.erase(node.tree_per_frame.begin());
                     for (auto &fpf : node.tree_per_frame) fpf.frame--;
 
-                    if (node.tree_per_frame.empty())
+                    if ((int)node.tree_per_frame.size() < 2)
                     {
                         to_remove.push_back(v);
                         tree_features_removed++;
@@ -1615,7 +1615,7 @@ void FeatureManager::removeBack()
                 {
                     node.tree_per_frame.erase(node.tree_per_frame.begin());
                     for (auto &fpf : node.tree_per_frame) fpf.frame--;
-                    if (node.tree_per_frame.empty())
+                    if ((int)node.tree_per_frame.size() < 2)
                     {
                         to_remove.push_back(v);
                         tree_features_removed++;
