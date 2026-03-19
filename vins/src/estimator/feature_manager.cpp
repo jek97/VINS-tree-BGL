@@ -486,30 +486,10 @@ void FeatureManager::removeFailures()
 
             for (int v : to_remove)
             {
-                // Bridge: connect direct parent to each direct child before removing.
-                // Any removal order is correct — each node processes the up-to-date
-                // graph, so bridges added in earlier steps are already visible.
-                int parent = -1;
-                {
-                    auto [iei, iei_end] = boost::in_edges(v, model_tree);
-                    if (iei != iei_end)
-                        parent = (int)boost::source(*iei, model_tree);
-                }
-                if (parent != -1)
-                {
-                    // Collect children before adding edges to avoid iterator invalidation.
-                    std::vector<int> children;
-                    auto [oei, oei_end] = boost::out_edges(v, model_tree);
-                    for (; oei != oei_end; ++oei)
-                        children.push_back((int)boost::target(*oei, model_tree));
-                    for (int c : children)
-                        boost::add_edge(parent, c, model_tree);
-                }
-
-                boost::remove_vertex(v, model_tree);
+                node_bypass(model_tree, v);
                 tree_features_removed++;
-                // BGL updates all edge src/tgt descriptors > v automatically.
-                // Remaining to_remove entries are all < v, so they need no adjustment.
+                // BGL shifts all indices > v down by 1; remaining to_remove
+                // entries are all < v, so no adjustment is needed.
             }
         }
         // Remove trees that became empty.
