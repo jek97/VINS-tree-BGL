@@ -51,7 +51,6 @@ FeatureTracker::FeatureTracker()
     stereo_cam = 0;
     n_id = 0;
     hasPrediction = false;
-    has_tree_Prediction = false;
 }
 
 void FeatureTracker::setMask() // basically given the points for which we got a matching it prioritize the points that has been track for a long time, and remove the feature that are too close to each other
@@ -1160,8 +1159,12 @@ cv::Scalar FeatureTracker::genRandomColor()
     return cv::Scalar(b, g, r);
 }
 
-pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double _cur_time, ObservedForest &cur_forest)
-{        
+pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(
+    double _cur_time, ObservedForest &cur_forest,
+    const ObservedForest& model_forest,
+    const Eigen::Matrix3d& last_R, const Eigen::Vector3d& last_P,
+    const Eigen::Matrix3d& last_ric, const Eigen::Vector3d& last_tic)
+{
     // save the K matrix for point visualization (in track tree)
     if(!K_mat_f)
     {
@@ -1169,95 +1172,54 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
         K_vec << ref_frame["tree_camera"].k[0], 0.0, ref_frame["tree_camera"].k[2], 0.0, ref_frame["tree_camera"].k[4], ref_frame["tree_camera"].k[5], 0.0, 0.0, 1.0;
         K_mat = Eigen::Map<Eigen::Matrix<double, 3, 3, Eigen::RowMajor>>(K_vec.data());
     }
-    
+
     evaluate_fd(cur_forest);
-    
+
     vector<pair<int, vector<pair<pair<string, string>, double>>>> complete_matches;
-    if(prev_forest.size() > 0)
-    {          
-        if(has_tree_Prediction)
-        {   
-            // do matching with predicted forest
-            vector<vector<pair<double, vector<pair<pair<string, string>, double>>>>> tree_matches(cur_forest.size(), std::vector<std::pair<double, std::vector<std::pair<std::pair<std::string, std::string>, double>>>>(predict_forest_pts.size(), {0.0, {{{"", ""}, 0.0}}})); // initialize the array that will keep matching and their cost for each combination of tree between previous and current forest
-            
-            for(size_t i = 0; i < cur_forest.size(); ++i) // for every tree in current forest
+    if(model_forest.size() > 0)
+    {
+        // Project model_forest nodes from world frame into the current camera frame
+        // using the last available robot pose (last_R, last_P) and camera extrinsics (last_ric, last_tic).
+        ObservedForest projected_model_forest;
+        for (const ObservedTree& model_tree : model_forest)
+        {
+            ObservedTree proj_tree;
+            for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
             {
-                for(size_t j = 0; j < predict_forest_pts.size(); ++j) // for every tree in previous forest
-                {
-                    tree_matches[i][j] = isomorphism(cur_forest[i], predict_forest_pts[j]);
-                }
+                ObservedNode obs = model_tree[v];
+                Eigen::Vector3d pts_w(obs.x, obs.y, obs.z);
+                Eigen::Vector3d pts_imu = last_R.transpose() * (pts_w - last_P);
+                Eigen::Vector3d pts_cam = last_ric.transpose() * (pts_imu - last_tic);
+                obs.x = pts_cam.x(); obs.y = pts_cam.y(); obs.z = pts_cam.z();
+                boost::add_vertex(obs, proj_tree);
             }
-
-            // evaluate capacity and cost matrix for minimum cost maximum cardinality bipartite matching
-            auto [capacity, cost] = forest_bipartite_capacity_cost_evaluation(tree_matches);
-            
-            // find minimum cost maximum cardinality bipartite matching
-            FeatureTracker::BpMatcher matcher(capacity.size());
-            vector<double> ret = matcher.getMaxFlow(capacity, cost, 0, capacity.size() -1);
-
-            complete_matches = matcher.get_forest_matchings(tree_matches);
-            
-            // evaluate number of node matched
-            int total_matches = 0;
-            for(size_t i = 0; i < cur_forest.size(); ++i){ // for all the current trees
-                if(complete_matches[i].first != -1) // if you get a matching for that tree
-                {
-                    total_matches += complete_matches[i].second.size(); // sum all the node matching for that tree
-                }                
-            }
-
-            if(total_matches < 10) // if you have less then _ matchings (tree wise matching)
-            {   
-                complete_matches.clear(); // clear previous matchings
-
-                // run normal matching
-                vector<vector<pair<double, vector<pair<pair<string, string>, double>>>>> tree_matches(cur_forest.size(), std::vector<std::pair<double, std::vector<std::pair<std::pair<std::string, std::string>, double>>>>(prev_forest.size(), {0.0, {{{"", ""}, 0.0}}})); // initialize the array that will keep matching and their cost for each combination of tree between previous and current forest
-                
-                for(size_t i = 0; i < cur_forest.size(); ++i) // for every tree in current forest
-                {
-                    for(size_t j = 0; j < prev_forest.size(); ++j) // for every tree in previous forest
-                    {
-                        tree_matches[i][j] = isomorphism(cur_forest[i], prev_forest[j]);
-                    }
-                }
-
-                // evaluate capacity and cost matrix for minimum cost maximum cardinality bipartite matching
-                auto [capacity, cost] = forest_bipartite_capacity_cost_evaluation(tree_matches);
-                
-                // find minimum cost maximum cardinality bipartite matching
-                FeatureTracker::BpMatcher matcher(capacity.size());
-                vector<double> ret = matcher.getMaxFlow(capacity, cost, 0, capacity.size() -1);
-
-                complete_matches = matcher.get_forest_matchings(tree_matches);
-            }
+            auto [ei, ei_end] = boost::edges(model_tree);
+            for (; ei != ei_end; ++ei)
+                boost::add_edge(boost::source(*ei, model_tree), boost::target(*ei, model_tree), proj_tree);
+            projected_model_forest.push_back(std::move(proj_tree));
         }
-        else
-        {   
-            // run normal matching
-            vector<vector<pair<double, vector<pair<pair<string, string>, double>>>>> tree_matches(cur_forest.size(), std::vector<std::pair<double, std::vector<std::pair<std::pair<std::string, std::string>, double>>>>(prev_forest.size(), {0.0, {{{"", ""}, 0.0}}})); // initialize the array that will keep matching and their cost for each combination of tree between previous and current forest
-            
-            for(size_t i = 0; i < cur_forest.size(); ++i) // for every tree in current forest
-            {
-                for(size_t j = 0; j < prev_forest.size(); ++j) // for every tree in previous forest
-                {   
-                    tree_matches[i][j] = isomorphism(cur_forest[i], prev_forest[j]); // evaluate largest isomorphism, obtaining nodes matchings and related cost
-                }
-            }
-            
-            // evaluate capacity and cost matrix for minimum cost maximum cardinality bipartite matching
-            auto [capacity, cost] = forest_bipartite_capacity_cost_evaluation(tree_matches);
-            
-            // find minimum cost maximum cardinality bipartite matching
-            FeatureTracker::BpMatcher matcher(capacity.size());
-            vector<double> ret = matcher.getMaxFlow(capacity, cost, 0, capacity.size() -1);
-            
-            complete_matches = matcher.get_forest_matchings(tree_matches);
-        }
-        
-        // remove statistical outliers:
-        vector<pair<int, vector<pair<pair<string, string>, double>>>> filtered_matches; // = complete_matches; // variable to store the filtered matching
-        filtered_matches = remove_statistical_outliers(complete_matches);
-        
+
+        evaluate_fd(projected_model_forest);
+
+        // run matching between cur_forest and projected model forest
+        vector<vector<pair<double, vector<pair<pair<string, string>, double>>>>> tree_matches(
+            cur_forest.size(),
+            std::vector<std::pair<double, std::vector<std::pair<std::pair<std::string, std::string>, double>>>>(
+                projected_model_forest.size(), {0.0, {{{"", ""}, 0.0}}}));
+
+        for(size_t i = 0; i < cur_forest.size(); ++i)
+            for(size_t j = 0; j < projected_model_forest.size(); ++j)
+                tree_matches[i][j] = isomorphism(cur_forest[i], projected_model_forest[j]);
+
+        auto [capacity, cost] = forest_bipartite_capacity_cost_evaluation(tree_matches);
+        FeatureTracker::BpMatcher matcher(capacity.size());
+        matcher.getMaxFlow(capacity, cost, 0, capacity.size() - 1);
+        complete_matches = matcher.get_forest_matchings(tree_matches);
+
+        // remove statistical outliers
+        vector<pair<int, vector<pair<pair<string, string>, double>>>> filtered_matches =
+            remove_statistical_outliers(complete_matches);
+
         // vecS: find a vertex by ex_id, returns -1 if not found
         auto find_vd = [](const ObservedTree& tree, const string& ex_id) -> int {
             for (int v = 0; v < (int)boost::num_vertices(tree); ++v)
@@ -1274,17 +1236,17 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
         {
             if (filtered_matches[i].first != -1)
             {
-                const ObservedTree& prev_tree = prev_forest[filtered_matches[i].first];
+                const ObservedTree& model_tree = projected_model_forest[filtered_matches[i].first];
                 for (const auto& match : filtered_matches[i].second)
                 {
-                    const int prev_vd = find_vd(prev_tree,     match.first.second);
-                    const int cur_vd  = find_vd(cur_forest[i], match.first.first);
-                    if (prev_vd < 0 || cur_vd < 0) continue;
+                    const int model_vd = find_vd(model_tree,    match.first.second);
+                    const int cur_vd   = find_vd(cur_forest[i], match.first.first);
+                    if (model_vd < 0 || cur_vd < 0) continue;
 
-                    ObservedNode& pn = prev_forest[filtered_matches[i].first][prev_vd];
+                    const ObservedNode& pn = model_tree[model_vd];
                     ObservedNode& cn = cur_forest[i][cur_vd];
 
-                    oss << "    prev node " << pn.ex_id << " cur node " << cn.ex_id << " new id " << pn.id << std::endl;
+                    oss << "    model node " << pn.ex_id << " cur node " << cn.ex_id << " new id " << pn.id << std::endl;
                     ++n_f_match;
                     cn.id        = pn.id;
                     cn.track_cnt = pn.track_cnt + 1;
@@ -1304,63 +1266,47 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
         oss << "Total: " << n_match << " filtered " << n_f_match << std::endl;
         logMessage(oss.str());
 
-        //visualize the results
-        // evaluate the transformation matrix from left camera (where the point are represented) and the tree camera
-        // starting from the transformation matrix between tree and lcam divide it in rotation matrix and translation vector
+        // visualize the results
         Eigen::Matrix3d R_lcam_tree = T_lcam_tree.block<3, 3>(0, 0);
         Eigen::Vector3d P_lcam_tree = T_lcam_tree.block<3, 1>(0, 3);
-        
-        // evaluate the inverce tranformation matrix
         Eigen::Matrix3d R_tree_lcam = R_lcam_tree.transpose();
         Eigen::Vector3d P_tree_lcam = - R_tree_lcam * P_lcam_tree;
-            
-        // assemble the final matrix
         Eigen::MatrixXd T_prov = Eigen::MatrixXd(3, 4);
         T_prov << R_tree_lcam, P_tree_lcam;
-        Eigen::RowVector4d rowVec(0, 0, 0, 1); 
-            
+        Eigen::RowVector4d rowVec(0, 0, 0, 1);
         Eigen::Matrix4d T_tree_lcam;
         T_tree_lcam << T_prov, rowVec;
 
-        // create a vector of colors, one per tree, to use for the matched trees
         vector<cv::Scalar> match_circle_colors;
         vector<cv::Scalar> match_line_colors;
-        for(size_t i = 0; i < prev_forest.size(); ++i)
-        {   
-            // get circle and line color
-            cv::Scalar circle_color = genRandomColor();
-            cv::Scalar line_color = genRandomColor();
-
-            // save them in the relative vector
-            match_circle_colors.push_back(circle_color);
-            match_line_colors.push_back(line_color);
+        for(size_t i = 0; i < projected_model_forest.size(); ++i)
+        {
+            match_circle_colors.push_back(genRandomColor());
+            match_line_colors.push_back(genRandomColor());
         }
-        
-        // draw previous forest in the images
-        cv::Mat match_img_ = drawForest(prev_forest, T_tree_lcam, match_circle_colors, match_line_colors);
-        
-        // project a 3-D point (in left-cam frame) to a cv::Point in the tree-camera image
+
+        cv::Mat match_img_ = drawForest(projected_model_forest, T_tree_lcam, match_circle_colors, match_line_colors);
+
         auto project = [&](double x, double y, double z) -> cv::Point {
             Eigen::Vector3d p3d = (T_tree_lcam * Eigen::Vector4d(x, y, z, 1)).head<3>();
             Eigen::Vector3d uvs = K_mat * p3d;
             return cv::Point(static_cast<int>(uvs[0] / uvs[2]), static_cast<int>(uvs[1] / uvs[2]));
         };
 
-        // draw arrows connecting matched nodes
         for (size_t i = 0; i < cur_forest.size(); ++i)
         {
             if (filtered_matches[i].first != -1)
             {
-                const ObservedTree& prev_tree = prev_forest[filtered_matches[i].first];
+                const ObservedTree& model_tree = projected_model_forest[filtered_matches[i].first];
                 for (const auto& match : filtered_matches[i].second)
                 {
-                    const int prev_vd = find_vd(prev_tree,     match.first.second);
-                    const int cur_vd  = find_vd(cur_forest[i], match.first.first);
-                    if (prev_vd < 0 || cur_vd < 0) continue;
+                    const int model_vd = find_vd(model_tree,    match.first.second);
+                    const int cur_vd   = find_vd(cur_forest[i], match.first.first);
+                    if (model_vd < 0 || cur_vd < 0) continue;
 
                     cv::arrowedLine(match_img_,
-                        project(prev_tree[prev_vd].x,     prev_tree[prev_vd].y,     prev_tree[prev_vd].z),
-                        project(cur_forest[i][cur_vd].x,  cur_forest[i][cur_vd].y,  cur_forest[i][cur_vd].z),
+                        project(model_tree[model_vd].x, model_tree[model_vd].y, model_tree[model_vd].z),
+                        project(cur_forest[i][cur_vd].x, cur_forest[i][cur_vd].y, cur_forest[i][cur_vd].z),
                         cv::Scalar(0, 255, 0), 1, 8, 0, 0.2);
                 }
             }
@@ -1368,17 +1314,16 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
 
         match_img = std::make_tuple(match_img_, ref_frame["tree_camera"], _cur_time);
     }
-    
+
     // assign new IDs to any node not matched this frame
     for (ObservedTree& tree : cur_forest)
         for (int v = 0; v < (int)boost::num_vertices(tree); ++v)
             if (tree[v].id < 0)
                 tree[v].id = new_ids++;
 
-    // save for next iteration
+    // save for next iteration (used by removeOutliers)
     prev_forest = cur_forest;
     _prev_time = _cur_time;
-    has_tree_Prediction = false;
 
     // build output: one ObservedTree per current tree, tagged with the index
     // of the previous-forest tree it was matched against (-1 = unmatched)
@@ -1621,34 +1566,6 @@ void FeatureTracker::setPrediction(map<int, Eigen::Vector3d> &predictPts)
         }
         else // otherwise add the previous point ?
             predict_pts.push_back(prev_pts[i]);
-    }
-}
-
-void FeatureTracker::set_tree_Prediction(map<int, Eigen::Vector3d> &predict_t_Pts)
-{
-    has_tree_Prediction = true;
-    predict_forest_pts.clear();
-    predict_forest_pts_debug.clear();
-
-    for (const ObservedTree& prev_tree : prev_forest)
-    {
-        ObservedTree predict_tree = prev_tree;       // copy: all nodes + edges, positions updated below
-        ObservedTree predict_tree_debug;             // only nodes that received a prediction
-
-        for (int v = 0; v < (int)boost::num_vertices(predict_tree); ++v)
-        {
-            auto it = predict_t_Pts.find(predict_tree[v].id);
-            if (it != predict_t_Pts.end())
-            {
-                predict_tree[v].x = it->second.x();
-                predict_tree[v].y = it->second.y();
-                predict_tree[v].z = it->second.z();
-                boost::add_vertex(predict_tree[v], predict_tree_debug);
-            }
-        }
-
-        predict_forest_pts.push_back(std::move(predict_tree));
-        predict_forest_pts_debug.push_back(std::move(predict_tree_debug));
     }
 }
 

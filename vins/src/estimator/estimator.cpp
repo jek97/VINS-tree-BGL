@@ -283,7 +283,14 @@ void Estimator::inputForest(double t, std::pair<bool, ObservedForest> &forest)
     if(forest.first) // if we received a valid forest
     {
         t_featureFrame.first = true;
-        t_featureFrame.second = featureTracker.trackForest(t, forest.second);
+        ObservedForest model_forest_copy;
+        {
+            std::lock_guard<std::mutex> lk(Mlmodel);
+            model_forest_copy = last_model_forest;
+        }
+        t_featureFrame.second = featureTracker.trackForest(t, forest.second, model_forest_copy,
+                                                           Rs[WINDOW_SIZE], Ps[WINDOW_SIZE],
+                                                           ric[0], tic[0]);
         auto [joinedImage, cam_info, match_time] = featureTracker.getTreeMatch();
         pubTreeMatchImage(joinedImage, cam_info, match_time);
     }
@@ -2907,30 +2914,6 @@ void Estimator::predictPtsInNextFrame()
     }
     featureTracker.setPrediction(predictPts); // set the prediction in the feature tracker, where it will be used
     //printf("estimator output %d predict pts\n",(int)predictPts.size());
-    if (USE_TREE) 
-    {   
-        map<int, Eigen::Vector3d> predict_t_Pts;
-        for (auto &_mt : f_manager.t_feature)
-        for (int _v = 0; _v < (int)boost::num_vertices(_mt); ++_v)
-        {
-            auto &it_per_id = _mt[_v];
-            if (it_per_id.estimated_depth > 0)
-            {
-                int firstIndex = it_per_id.start_frame;
-                int lastIndex = it_per_id.endFrame();
-                if ((int)it_per_id.tree_per_frame.size() >= 2 && lastIndex == frame_count)
-                {
-                    double depth = it_per_id.estimated_depth;
-                    Vector3d pts_j   = ric[0] * (depth * it_per_id.tree_per_frame[0].point) + tic[0];
-                    Vector3d pts_w   = Rs[firstIndex] * pts_j + Ps[firstIndex];
-                    Vector3d pts_local = nextT.block<3,3>(0,0).transpose() * (pts_w - nextT.block<3,1>(0,3));
-                    Vector3d pts_cam   = ric[0].transpose() * (pts_local - tic[0]);
-                    predict_t_Pts[it_per_id.feature_id] = pts_cam;
-                }
-            }
-        }
-        featureTracker.set_tree_Prediction(predict_t_Pts); // set the prediction in the feature tracker, where it will be used
-    }
 }
 
 double Estimator::reprojectionError(Matrix3d &Ri, Vector3d &Pi, Matrix3d &rici, Vector3d &tici,

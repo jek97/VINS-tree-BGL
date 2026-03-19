@@ -68,7 +68,10 @@ class FeatureTracker
 public:
     FeatureTracker();
     map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> trackImage(double _cur_time, const cv::Mat &_img, const cv::Mat &_img1 = cv::Mat());
-    pair<double, vector<pair<int, ObservedTree>>> trackForest(double _cur_time, ObservedForest &cur_forest);
+    pair<double, vector<pair<int, ObservedTree>>> trackForest(double _cur_time, ObservedForest &cur_forest,
+        const ObservedForest& model_forest,
+        const Eigen::Matrix3d& last_R, const Eigen::Vector3d& last_P,
+        const Eigen::Matrix3d& last_ric, const Eigen::Vector3d& last_tic);
     void evaluate_fd(ObservedForest &forest);
     int hammingDistance(const std::vector<uint8_t>& fd_brief1, const std::vector<uint8_t>& fd_brief2);
     pair<double, vector<pair<pair<string, string>, double>>> isomorphism(ObservedTree tree_0, ObservedTree tree_1);
@@ -116,7 +119,6 @@ public:
     cv::Scalar genRandomColor();
     cv::Mat drawForest(const ObservedForest &forest, const Eigen::Matrix4d T_tree_lcam, const vector<cv::Scalar> circle_colors, const vector<cv::Scalar> line_colors);
     void setPrediction(map<int, Eigen::Vector3d> &predictPts);
-    void set_tree_Prediction(map<int, Eigen::Vector3d> &predict_t_Pts);
     double distance(cv::Point2f &pt1, cv::Point2f &pt2);
     void removeOutliers(set<int> &removePtsIds, set<int> &remove_t_PtsIds);
     cv::Mat getTrackImage();
@@ -150,10 +152,8 @@ public:
     bool hasPrediction;
 
     ObservedForest prev_forest;
-    ObservedForest predict_forest_pts, predict_forest_pts_debug;
     double _prev_time;
     int new_ids = 0;
-    bool has_tree_Prediction;
 
     Eigen::Matrix3d K_mat; // defined to reproject the 3d point in the image for visualization purposes
     bool K_mat_f = false;
