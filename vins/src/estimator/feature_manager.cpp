@@ -492,10 +492,10 @@ void FeatureManager::removeFailures()
                 // entries are all < v, so no adjustment is needed.
             }
         }
-        // Remove trees that became empty.
+        // Remove trees that became too small to be useful (< 2 nodes).
         t_feature.erase(
             std::remove_if(t_feature.begin(), t_feature.end(),
-                           [](const ModelTree &t){ return boost::num_vertices(t) == 0; }),
+                           [](const ModelTree &t){ return boost::num_vertices(t) < 2; }),
             t_feature.end());
     }
     ///// LOG /////
