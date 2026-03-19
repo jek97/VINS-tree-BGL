@@ -952,7 +952,7 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
     logMessage(oss.str());
     ///// LOG /////
 
-    ImageFrame imageframe(image, tree, header); // re-associate the feature frame to its time, actually this variable has the same datastructure of the feature
+    ImageFrame imageframe(image, header); // re-associate the feature frame to its time, actually this variable has the same datastructure of the feature
     imageframe.pre_integration = tmp_pre_integration; // add to the imageframe variable the accellerations preintegreted evaluated before
     all_image_frame.insert(make_pair(header, imageframe)); // add the imageframe to all_image_frame variable
     tmp_pre_integration = new IntegrationBase{acc_0, gyr_0, Bas[frame_count], Bgs[frame_count]}; // reset tmp_pre_integration for next iterations
@@ -1107,11 +1107,12 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
             oss.str("");
             oss.clear();
             oss << "---------------------------------------------- tree buffer ------------------------------------------------------------" << std::endl;
-            for (auto &it_per_id : prev_deb_t_feature) // for all the visual features
+            for (auto &_mt : prev_deb_t_feature)
+            for (int _v = 0; _v < (int)boost::num_vertices(_mt); ++_v)
             {
+                auto &it_per_id = _mt[_v];
                 oss << "id " << it_per_id.feature_id << " start frame " << it_per_id.start_frame << " solver falg: " << it_per_id.solve_flag <<  " observations:" << std::endl;
-
-                for (auto &it_per_frame : it_per_id.tree_per_frame) // for all the observations of the feature
+                for (auto &it_per_frame : it_per_id.tree_per_frame)
                 {
                     oss << "    obs 3d pos " << it_per_frame.point.x() << " " << it_per_frame.point.y() << " "<< it_per_frame.point.z() << " normal " << it_per_frame.n.x() << " " << it_per_frame.n.y() << " " << it_per_frame.n.z() << " velocity " << it_per_frame.velocity.x() << " " << it_per_frame.velocity.y() << " " << it_per_frame.velocity.z()<< " td " << it_per_frame.cur_td << " frame " << it_per_frame.frame << std::endl;
                 }
@@ -1146,11 +1147,12 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
             oss.str("");
             oss.clear();
             oss << "---------------------------------------------- tree buffer ------------------------------------------------------------" << std::endl;
-            for (auto &it_per_id : f_manager.t_feature) // for all the visual features
+            for (auto &_mt : f_manager.t_feature)
+            for (int _v = 0; _v < (int)boost::num_vertices(_mt); ++_v)
             {
+                auto &it_per_id = _mt[_v];
                 oss << "id " << it_per_id.feature_id << " start frame " << it_per_id.start_frame << " solver falg: " << it_per_id.solve_flag <<  " observations:" << std::endl;
-
-                for (auto &it_per_frame : it_per_id.tree_per_frame) // for all the observations of the feature
+                for (auto &it_per_frame : it_per_id.tree_per_frame)
                 {
                     oss << "    obs 3d pos " << it_per_frame.point.x() << " " << it_per_frame.point.y() << " "<< it_per_frame.point.z() << " normal " << it_per_frame.n.x() << " " << it_per_frame.n.y() << " " << it_per_frame.n.z() << " velocity " << it_per_frame.velocity.x() << " " << it_per_frame.velocity.y() << " " << it_per_frame.velocity.z()<< " td " << it_per_frame.cur_td << " frame " << it_per_frame.frame << std::endl;
                 }
@@ -1200,10 +1202,7 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
         for(const auto& f : f_manager.feature){
             prev_deb_feature.push_back(f);
         }
-        prev_deb_t_feature.clear();
-        for(const auto& tf : f_manager.t_feature){
-            prev_deb_t_feature.push_back(tf);
-        }
+        prev_deb_t_feature = f_manager.t_feature;
         /////// DEBUG //////////
         
         slideWindow(); // slide all the quantities in the window
@@ -1725,11 +1724,12 @@ void Estimator::optimization()
     double avg_t_n_obs = 0;
     int t_count = 0;
     int t_deb_c = 0;
-    for (auto &it_per_id : f_manager.t_feature) // for all the visual features
+    for (auto &_mt : f_manager.t_feature)
+    for (int _v = 0; _v < (int)boost::num_vertices(_mt); ++_v)
     {
-        int n_t_obs = 0;
+        auto &it_per_id = _mt[_v];
         t_deb_c += 1;
-        if((it_per_id.has_frame(frame_count)) && (it_per_id.tree_per_frame.size() >= 3)){
+        if (it_per_id.has_frame(frame_count) && it_per_id.tree_per_frame.size() >= 3) {
             t_count++;
             avg_t_n_obs += (it_per_id.tree_per_frame.size() - avg_t_n_obs) / t_count;
         }
@@ -1917,12 +1917,14 @@ void Estimator::optimization()
     if (USE_TREE)
     {
         int t_feature_index = -1;
-        for (auto &it_per_id : f_manager.t_feature)
+        for (auto &_mt : f_manager.t_feature)
+        for (int _v = 0; _v < (int)boost::num_vertices(_mt); ++_v)
         {
-            if (it_per_id.used_num < 3) // if the feature has been observed less then 4 times skip it
+            auto &it_per_id = _mt[_v];
+            if (it_per_id.used_num < 3)
                 continue;
             ++t_feature_index;
-            
+
             int imu_i = it_per_id.start_frame;
             Vector3d pts_i = it_per_id.tree_per_frame[0].point;
 
@@ -1931,74 +1933,52 @@ void Estimator::optimization()
                 if (imu_i != it_per_frame.frame)
                 {
                     Vector3d pts_j = it_per_frame.point;
-                    
+
                     if(ICP_P2L)
                     {
                         Vector3d n_j = it_per_frame.n;
                         ceres::CostFunction* f_icp = ICPCostFunction_p2l::Create(
-                            pts_i, it_per_id.tree_per_frame[0].velocity, 
-                            it_per_id.tree_per_frame[0].cur_td, 
+                            pts_i, it_per_id.tree_per_frame[0].velocity,
+                            it_per_id.tree_per_frame[0].cur_td,
                             it_per_id.tree_per_frame[0].n,
                             pts_j, it_per_frame.velocity, it_per_frame.cur_td);
-                        
-                        // Evaluate residual
-                        double residual[3]; // p2l has 1 residual
+
+                        double residual[3];
                         double *parameters[5] = {
-                            para_Pose[imu_i], 
-                            para_Pose[it_per_frame.frame], 
-                            para_Ex_Pose[0], 
-                            para_tree_Features[t_feature_index], 
+                            para_Pose[imu_i],
+                            para_Pose[it_per_frame.frame],
+                            para_Ex_Pose[0],
+                            para_tree_Features[t_feature_index],
                             para_Td[0]
                         };
                         f_icp->Evaluate(parameters, residual, nullptr);
-                        
-                        // Compute squared norm s = r? r
-                        double s = residual[0] * residual[0] + 
-                                    residual[1] * residual[1] + 
-                                    residual[2] * residual[2];
-
-                        // Apply loss function
+                        double s = residual[0]*residual[0] + residual[1]*residual[1] + residual[2]*residual[2];
                         double rho[3];
                         tree_loss_function->Evaluate(s, rho);
-
-                        // Final cost is 0.5 * rho[0]
-                        double cost = 0.5 * rho[0];
-                        icp_residual_sum_bef += cost;
+                        icp_residual_sum_bef += 0.5 * rho[0];
                         icp_residual_count_bef += 1;
-                        
                         delete f_icp;
                     }
-                    else // p2p
+                    else
                     {
                         ceres::CostFunction* f_icp = ICPCostFunction_p2p::Create(
-                            pts_i, it_per_id.tree_per_frame[0].velocity, 
+                            pts_i, it_per_id.tree_per_frame[0].velocity,
                             it_per_id.tree_per_frame[0].cur_td,
                             pts_j, it_per_frame.velocity, it_per_frame.cur_td);
-                        
-                        // Evaluate residual
-                        double residual[3]; // p2p has 3 residuals
+                        double residual[3];
                         double *parameters[5] = {
-                            para_Pose[imu_i], 
-                            para_Pose[it_per_frame.frame], 
-                            para_Ex_Pose[0], 
-                            para_tree_Features[t_feature_index], 
+                            para_Pose[imu_i],
+                            para_Pose[it_per_frame.frame],
+                            para_Ex_Pose[0],
+                            para_tree_Features[t_feature_index],
                             para_Td[0]
                         };
                         f_icp->Evaluate(parameters, residual, nullptr);
-                        // Compute squared norm s = r? r
-                        double s = residual[0] * residual[0] + 
-                                    residual[1] * residual[1] + 
-                                    residual[2] * residual[2];
-
-                        // Apply loss function
+                        double s = residual[0]*residual[0] + residual[1]*residual[1] + residual[2]*residual[2];
                         double rho[3];
                         tree_loss_function->Evaluate(s, rho);
-
-                        // Final cost is 0.5 * rho[0]
-                        double cost = 0.5 * rho[0];
-                        icp_residual_sum_bef += cost;
+                        icp_residual_sum_bef += 0.5 * rho[0];
                         icp_residual_count_bef += 1;
-                        
                         delete f_icp;
                     }
                 }
@@ -2124,49 +2104,43 @@ void Estimator::optimization()
     
     if (USE_TREE) 
     {   
-        for (auto &it_per_id : f_manager.t_feature) // for all the visual features
+        for (auto &_mt : f_manager.t_feature)
+        for (int _v = 0; _v < (int)boost::num_vertices(_mt); ++_v)
         {
+            auto &it_per_id = _mt[_v];
             it_per_id.used_num = it_per_id.tree_per_frame.size();
-            if (it_per_id.used_num < 3) // if the feature has been observed less then 4 times skip it
+            if (it_per_id.used_num < 3)
                 continue;
 
             ++t_feature_index;
 
-            int imu_i = it_per_id.start_frame; // get a counter from the first appearence 
+            int imu_i = it_per_id.start_frame;
             int n_obs_added = 0;
-            Vector3d pts_i = it_per_id.tree_per_frame[0].point; // get the first observation 3d position of the feature
+            Vector3d pts_i = it_per_id.tree_per_frame[0].point;
 
-            for (auto &it_per_frame : it_per_id.tree_per_frame) // for all the observations of the feature
+            for (auto &it_per_frame : it_per_id.tree_per_frame)
             {
-                
-                if (imu_i != it_per_frame.frame) // if the feature has been observed for more then once
-                {   
-                    Vector3d pts_j = it_per_frame.point; // get the 3d position of the next appearence of the feature 
-                    if(ICP_P2L) // use point to line ICP cost function
-                    {   
-                        Vector3d n_j = it_per_frame.n; // get the 3d unit vector to the node parent 
-                        // ICP pont to line with velocity compensation NOTE it should optimize on the pts_i normal not the j one
+                if (imu_i != it_per_frame.frame)
+                {
+                    Vector3d pts_j = it_per_frame.point;
+                    if(ICP_P2L)
+                    {
+                        Vector3d n_j = it_per_frame.n;
                         n_obs_added += 1;
-                        // ICP pont to line with velocity compensation with autonomous differentiation
                         ceres::CostFunction* f_icp = ICPCostFunction_p2l::Create(pts_i, it_per_id.tree_per_frame[0].velocity, it_per_id.tree_per_frame[0].cur_td, it_per_id.tree_per_frame[0].n, pts_j, it_per_frame.velocity, it_per_frame.cur_td);
                         problem.AddResidualBlock(f_icp, tree_loss_function, para_Pose[imu_i], para_Pose[it_per_frame.frame], para_Ex_Pose[0], para_tree_Features[t_feature_index], para_Td[0]);
-
                     }
-                    else // use point to point ICP cost function
+                    else
                     {
                         n_obs_added += 1;
-                        // ICP pont to point with velocity compensation with autonomous differentiation
                         ceres::CostFunction* f_icp = ICPCostFunction_p2p::Create(pts_i, it_per_id.tree_per_frame[0].velocity, it_per_id.tree_per_frame[0].cur_td, pts_j, it_per_frame.velocity, it_per_frame.cur_td);
                         problem.AddResidualBlock(f_icp, tree_loss_function, para_Pose[imu_i], para_Pose[it_per_frame.frame], para_Ex_Pose[0], para_tree_Features[t_feature_index], para_Td[0]);
                     }
                 }
-
-                f_m_t_cnt++; // increment the counter of processed features
+                f_m_t_cnt++;
             }
-            if(n_obs_added > 0) 
-            {
+            if (n_obs_added > 0)
                 oss << "    tree feature " << it_per_id.feature_id << " with " << n_obs_added << " observations " << std::endl;
-            }
         }
     }
     
@@ -2379,12 +2353,14 @@ void Estimator::optimization()
     if (USE_TREE)
     {
         int t_feature_index = -1;
-        for (auto &it_per_id : f_manager.t_feature)
+        for (auto &_mt : f_manager.t_feature)
+        for (int _v = 0; _v < (int)boost::num_vertices(_mt); ++_v)
         {
-            if (it_per_id.used_num < 3) // if the feature has been observed less then 4 times skip it
+            auto &it_per_id = _mt[_v];
+            if (it_per_id.used_num < 3)
                 continue;
             ++t_feature_index;
-            
+
             int imu_i = it_per_id.start_frame;
             Vector3d pts_i = it_per_id.tree_per_frame[0].point;
 
@@ -2393,74 +2369,50 @@ void Estimator::optimization()
                 if (imu_i != it_per_frame.frame)
                 {
                     Vector3d pts_j = it_per_frame.point;
-                    
                     if(ICP_P2L)
                     {
                         Vector3d n_j = it_per_frame.n;
                         ceres::CostFunction* f_icp = ICPCostFunction_p2l::Create(
-                            pts_i, it_per_id.tree_per_frame[0].velocity, 
-                            it_per_id.tree_per_frame[0].cur_td, 
+                            pts_i, it_per_id.tree_per_frame[0].velocity,
+                            it_per_id.tree_per_frame[0].cur_td,
                             it_per_id.tree_per_frame[0].n,
                             pts_j, it_per_frame.velocity, it_per_frame.cur_td);
-                        
-                        // Evaluate residual
-                        double residual[3]; // p2l has 1 residual
+                        double residual[3];
                         double *parameters[5] = {
-                            para_Pose[imu_i], 
-                            para_Pose[it_per_frame.frame], 
-                            para_Ex_Pose[0], 
-                            para_tree_Features[t_feature_index], 
+                            para_Pose[imu_i],
+                            para_Pose[it_per_frame.frame],
+                            para_Ex_Pose[0],
+                            para_tree_Features[t_feature_index],
                             para_Td[0]
                         };
                         f_icp->Evaluate(parameters, residual, nullptr);
-                        
-                        // Compute squared norm s = r? r
-                        double s = residual[0] * residual[0] + 
-                                    residual[1] * residual[1] + 
-                                    residual[2] * residual[2];
-
-                        // Apply loss function
+                        double s = residual[0]*residual[0] + residual[1]*residual[1] + residual[2]*residual[2];
                         double rho[3];
                         tree_loss_function->Evaluate(s, rho);
-
-                        // Final cost is 0.5 * rho[0]
-                        double cost = 0.5 * rho[0];
-                        icp_residual_sum_aft += cost;
+                        icp_residual_sum_aft += 0.5 * rho[0];
                         icp_residual_count_aft += 1;
-                        
                         delete f_icp;
                     }
-                    else // p2p
+                    else
                     {
                         ceres::CostFunction* f_icp = ICPCostFunction_p2p::Create(
-                            pts_i, it_per_id.tree_per_frame[0].velocity, 
+                            pts_i, it_per_id.tree_per_frame[0].velocity,
                             it_per_id.tree_per_frame[0].cur_td,
                             pts_j, it_per_frame.velocity, it_per_frame.cur_td);
-                        
-                        // Evaluate residual
-                        double residual[3]; // p2p has 3 residuals
+                        double residual[3];
                         double *parameters[5] = {
-                            para_Pose[imu_i], 
-                            para_Pose[it_per_frame.frame], 
-                            para_Ex_Pose[0], 
-                            para_tree_Features[t_feature_index], 
+                            para_Pose[imu_i],
+                            para_Pose[it_per_frame.frame],
+                            para_Ex_Pose[0],
+                            para_tree_Features[t_feature_index],
                             para_Td[0]
                         };
                         f_icp->Evaluate(parameters, residual, nullptr);
-                        // Compute squared norm s = r? r
-                        double s = residual[0] * residual[0] + 
-                                    residual[1] * residual[1] + 
-                                    residual[2] * residual[2];
-
-                        // Apply loss function
+                        double s = residual[0]*residual[0] + residual[1]*residual[1] + residual[2]*residual[2];
                         double rho[3];
                         tree_loss_function->Evaluate(s, rho);
-
-                        // Final cost is 0.5 * rho[0]
-                        double cost = 0.5 * rho[0];
-                        icp_residual_sum_aft += cost;
+                        icp_residual_sum_aft += 0.5 * rho[0];
                         icp_residual_count_aft += 1;
-                        
                         delete f_icp;
                     }
                 }
@@ -2574,43 +2526,43 @@ void Estimator::optimization()
             if (USE_TREE)
             {
                 int t_feature_index = -1;
-                for (auto &it_per_id : f_manager.t_feature) // for all the features
+                for (auto &_mt : f_manager.t_feature)
+                for (int _v = 0; _v < (int)boost::num_vertices(_mt); ++_v)
                 {
-                    it_per_id.used_num = it_per_id.tree_per_frame.size(); // set as used number the number of appearence of the feature
-                    if (it_per_id.used_num < 3) // if it's smaller then 4 skip the feature
+                    auto &it_per_id = _mt[_v];
+                    it_per_id.used_num = it_per_id.tree_per_frame.size();
+                    if (it_per_id.used_num < 3)
                         continue;
 
                     ++t_feature_index;
 
-                    int imu_i = it_per_id.start_frame; // get the index for the first and second appearence of the feature
-                    if (imu_i != 0) // ? if it didn't appear at the frame_count 0 skip the feature?
+                    int imu_i = it_per_id.start_frame;
+                    if (imu_i != 0)
                         continue;
 
-                    Vector3d pts_i = it_per_id.tree_per_frame[0].point; // get the 3d position of the feature in its first appearence
+                    Vector3d pts_i = it_per_id.tree_per_frame[0].point;
 
-                    for (auto &it_per_frame : it_per_id.tree_per_frame) // for all the appearence of the feature
+                    for (auto &it_per_frame : it_per_id.tree_per_frame)
                     {
-                        if(imu_i != it_per_frame.frame) // if the feature has been observed for more then once
-                        {   
-                            Vector3d pts_j = it_per_frame.point; // get the 3d position of the next appearence of the feature 
-                            if(ICP_P2L) // use point to line ICP cost function
-                            {   
-                                Vector3d n_j = it_per_frame.n; // get the 3d unit vector to the node parent 
-                                // ICP pont to line with velocity compensation with autonomous differentiation
+                        if (imu_i != it_per_frame.frame)
+                        {
+                            Vector3d pts_j = it_per_frame.point;
+                            if(ICP_P2L)
+                            {
+                                Vector3d n_j = it_per_frame.n;
                                 ceres::CostFunction* f_icp = ICPCostFunction_p2l::Create(pts_i, it_per_id.tree_per_frame[0].velocity, it_per_id.tree_per_frame[0].cur_td, it_per_id.tree_per_frame[0].n, pts_j, it_per_frame.velocity, it_per_frame.cur_td);
                                 ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(f_icp, tree_loss_function,
-                                                                                        vector<double *>{para_Pose[imu_i], para_Pose[it_per_frame.frame], para_Ex_Pose[0], para_tree_Features[t_feature_index], para_Td[0]},
-                                                                                        vector<int>{0, 3}); // create the residual block
-                                marginalization_info->addResidualBlockInfo(residual_block_info); // add the residual block to the marginalization problem
+                                    vector<double *>{para_Pose[imu_i], para_Pose[it_per_frame.frame], para_Ex_Pose[0], para_tree_Features[t_feature_index], para_Td[0]},
+                                    vector<int>{0, 3});
+                                marginalization_info->addResidualBlockInfo(residual_block_info);
                             }
-                            else // use point to point ICP cost function
+                            else
                             {
-                                // ICP pont to point with velocity compensation with autonomous differentiation
                                 ceres::CostFunction* f_icp = ICPCostFunction_p2p::Create(pts_i, it_per_id.tree_per_frame[0].velocity, it_per_id.tree_per_frame[0].cur_td, pts_j, it_per_frame.velocity, it_per_frame.cur_td);
                                 ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(f_icp, tree_loss_function,
-                                                                                        vector<double *>{para_Pose[imu_i], para_Pose[it_per_frame.frame], para_Ex_Pose[0], para_tree_Features[t_feature_index], para_Td[0]},
-                                                                                        vector<int>{0, 3}); // create the residual block
-                                marginalization_info->addResidualBlockInfo(residual_block_info); // add the residual block to the marginalization problem
+                                    vector<double *>{para_Pose[imu_i], para_Pose[it_per_frame.frame], para_Ex_Pose[0], para_tree_Features[t_feature_index], para_Td[0]},
+                                    vector<int>{0, 3});
+                                marginalization_info->addResidualBlockInfo(residual_block_info);
                             }
                         }
                     }
@@ -2909,23 +2861,22 @@ void Estimator::predictPtsInNextFrame()
     if (USE_TREE) 
     {   
         map<int, Eigen::Vector3d> predict_t_Pts;
-        for (auto &it_per_id : f_manager.t_feature) // for all the features
+        for (auto &_mt : f_manager.t_feature)
+        for (int _v = 0; _v < (int)boost::num_vertices(_mt); ++_v)
         {
-            if(it_per_id.estimated_depth > 0) // if the depth has been estimated
+            auto &it_per_id = _mt[_v];
+            if (it_per_id.estimated_depth > 0)
             {
-                int firstIndex = it_per_id.start_frame; // get their first appearence
-                int lastIndex = it_per_id.endFrame(); // get their last appearence
-                //printf("cur frame index  %d last frame index %d\n", frame_count, lastIndex);
-                if((int)it_per_id.tree_per_frame.size() >= 2 && lastIndex == frame_count) // if the feature has been observed for more then 2 times, and the last time was in the current frame_count
+                int firstIndex = it_per_id.start_frame;
+                int lastIndex = it_per_id.endFrame();
+                if ((int)it_per_id.tree_per_frame.size() >= 2 && lastIndex == frame_count)
                 {
-                    double depth = it_per_id.estimated_depth; //get the depth
-                    Vector3d pts_j = ric[0] * (depth * it_per_id.tree_per_frame[0].point) + tic[0]; // obtain the point position in the base link frame
-                    Vector3d pts_w = Rs[firstIndex] * pts_j + Ps[firstIndex]; // project in world frame
-                    Vector3d pts_local = nextT.block<3, 3>(0, 0).transpose() * (pts_w - nextT.block<3, 1>(0, 3)); // get its position in the next frame
-                    Vector3d pts_cam = ric[0].transpose() * (pts_local - tic[0]); // reproject it in the left camera reference frame
-                    
-                    int t_ptsIndex = it_per_id.feature_id; // get it id
-                    predict_t_Pts[t_ptsIndex] = pts_cam;
+                    double depth = it_per_id.estimated_depth;
+                    Vector3d pts_j   = ric[0] * (depth * it_per_id.tree_per_frame[0].point) + tic[0];
+                    Vector3d pts_w   = Rs[firstIndex] * pts_j + Ps[firstIndex];
+                    Vector3d pts_local = nextT.block<3,3>(0,0).transpose() * (pts_w - nextT.block<3,1>(0,3));
+                    Vector3d pts_cam   = ric[0].transpose() * (pts_local - tic[0]);
+                    predict_t_Pts[it_per_id.feature_id] = pts_cam;
                 }
             }
         }
@@ -3074,46 +3025,45 @@ void Estimator::outliersRejection(set<int> &removeIndex, set<int> &remove_tree_I
     oss << "tree features:" << std::endl;
     if (USE_TREE)
     {   
-        for (auto &it_per_id : f_manager.t_feature) // for all the feature
+        for (auto &_mt : f_manager.t_feature)
+        for (int _v = 0; _v < (int)boost::num_vertices(_mt); ++_v)
         {
+            auto &it_per_id = _mt[_v];
             double t_err = 0;
             int t_errCnt = 0;
 
-            it_per_id.used_num = it_per_id.tree_per_frame.size(); // set as used number the number of observations of the feature
-            if (it_per_id.used_num < 3) // if it's less then 4 skip it
+            it_per_id.used_num = it_per_id.tree_per_frame.size();
+            if (it_per_id.used_num < 3)
                 continue;
-            //feature_index ++; // to check what it does
-            int imu_i = it_per_id.start_frame; // get the feature count of the first appearence of the feature and the second one
-            Vector3d pts_i = it_per_id.tree_per_frame[0].point; // get the 3D position of the feature in its first appearence
-            double depth = it_per_id.estimated_depth; // get its depth
-            for (auto &it_per_frame : it_per_id.tree_per_frame) // for all the observation of the feature
-            {         
-                if (imu_i != it_per_frame.frame) // if it has been observed for more then once
-                {   
+
+            int imu_i = it_per_id.start_frame;
+            Vector3d pts_i = it_per_id.tree_per_frame[0].point;
+            double depth = it_per_id.estimated_depth;
+            for (auto &it_per_frame : it_per_id.tree_per_frame)
+            {
+                if (imu_i != it_per_frame.frame)
+                {
                     double tmp_error;
-                    Vector3d pts_j = it_per_frame.point; // get the new observation 3D position of the feature
-                    if(ICP_P2L) // use point to line ICP cost function
-                    {   
-                        Vector3d n_i = it_per_id.tree_per_frame[0].n; // get the 3d unit vector to the node parent 
-                        tmp_error = icp_p2l_error(Rs[imu_i], Ps[imu_i], ric[0], tic[0], 
-                                                        Rs[it_per_frame.frame], Ps[it_per_frame.frame], depth, pts_i, n_i, pts_j); // evaluate the reprojection error
-                    }
-                    else // use point to point ICP cost function
+                    Vector3d pts_j = it_per_frame.point;
+                    if(ICP_P2L)
                     {
-                        tmp_error = icp_p2p_error(Rs[imu_i], Ps[imu_i], ric[0], tic[0], 
-                                                        Rs[it_per_frame.frame], Ps[it_per_frame.frame], depth, pts_i, pts_j); // evaluate the reprojection error
+                        Vector3d n_i = it_per_id.tree_per_frame[0].n;
+                        tmp_error = icp_p2l_error(Rs[imu_i], Ps[imu_i], ric[0], tic[0],
+                                                  Rs[it_per_frame.frame], Ps[it_per_frame.frame], depth, pts_i, n_i, pts_j);
                     }
-                
+                    else
+                    {
+                        tmp_error = icp_p2p_error(Rs[imu_i], Ps[imu_i], ric[0], tic[0],
+                                                  Rs[it_per_frame.frame], Ps[it_per_frame.frame], depth, pts_i, pts_j);
+                    }
                     t_err += tmp_error;
                     t_errCnt++;
-                    //printf("tmp_error %f\n", FOCAL_LENGTH / 1.5 * tmp_error);
-                    
-                }       
+                }
             }
 
-            double ave_err = t_err / t_errCnt; // evaluate the average reprojection error for the given feature over its observations
-            if(ave_err > TREE_OUTLIERS_TRESH){ // if this condition hold
-                remove_tree_Index.insert(it_per_id.feature_id); // add the feature among the one to remove
+            double ave_err = t_err / t_errCnt;
+            if (ave_err > TREE_OUTLIERS_TRESH) {
+                remove_tree_Index.insert(it_per_id.feature_id);
                 oss << "    adding " << it_per_id.feature_id << std::endl;
             }
         }

@@ -89,22 +89,19 @@ class FeaturePerId
     int endFrame();
 };
 
-// LEGACY — kept until full migration to ModelTree is complete
 class TreePerFrame
 {
   public:
-    TreePerFrame(const TreeNode &_tree, double td, int _frame_count)
+    TreePerFrame(const ObservedNode &_node, double td, int _frame_count)
     {
-        point.x() = _tree.x; // position x
-        point.y() = _tree.y; // position y
-        point.z() = _tree.z; // position z
-        velocity.x() = _tree.v_x; // velocity x
-        velocity.y() = _tree.v_y; // velocity y
-        velocity.z() = _tree.v_z; // velocity z
-        n.x() = _tree.n_x; // unit vector to parent node x
-        n.y() = _tree.n_y; // unit vector to parent node y
-        n.z() = _tree.n_z; // unit vector to parent node z
-        track_cnt; // tracking counter (how many consecutive frames we've seen the feature)
+        point.x() = _node.x;
+        point.y() = _node.y;
+        point.z() = _node.z;
+        velocity.x() = _node.v_x;
+        velocity.y() = _node.v_y;
+        velocity.z() = _node.v_z;
+        n = Vector3d::Zero(); // not available in ObservedNode
+        track_cnt = _node.track_cnt;
         cur_td = td;
         frame = _frame_count;
     }
@@ -114,28 +111,7 @@ class TreePerFrame
     int track_cnt;
 };
 
-// LEGACY — kept until full migration to ModelTree is complete
-class TreePerId
-{
-  public:
-    const int feature_id;
-    int start_frame;
-    vector<TreePerFrame> tree_per_frame;
-    int used_num;
-    double estimated_depth;
-    int solve_flag; // 0 haven't solve yet; 1 solve succ; 2 solve fail;
-
-    TreePerId(int _feature_id, int _start_frame)
-        : feature_id(_feature_id), start_frame(_start_frame),
-          used_num(0), estimated_depth(-1.0), solve_flag(0)
-    {
-    }
-
-    int endFrame();
-    bool has_frame(int frame) const;
-};
-
-// Vertex bundle for the estimator-side graph (replaces TreePerId).
+// Vertex bundle for the estimator-side graph.
 struct ModelNode
 {
     const int feature_id;
@@ -182,7 +158,7 @@ class FeatureManager
     int getFeatureCount();
     int get_tree_FeatureCount();
     bool addFeatureCheckParallax(int frame_count, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, double td);
-    bool addFeatureTreeCheckParallax(int frame_count, const double header, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const pair<double, vector<TreeNode>> &tree, double td);
+    bool addFeatureTreeCheckParallax(int frame_count, const double header, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const pair<double, vector<pair<int, ObservedTree>>> &tree, double td);
     vector<pair<Vector3d, Vector3d>> getCorresponding(int frame_count_l, int frame_count_r);
     //void updateDepth(const VectorXd &x);
     void setDepth(const VectorXd &x);
@@ -208,7 +184,7 @@ class FeatureManager
     void removeOutlier(set<int> &outlierIndex, set<int> &tree_outlierIndex);
     void logMessage(const std::string& message); // DEBUG
     list<FeaturePerId> feature;
-    list<TreePerId> t_feature;
+    ModelForest t_feature;
     int last_track_num;
     double last_average_parallax;
     int new_feature_num;
@@ -243,7 +219,7 @@ class FeatureManager
 
   private:
     double compensatedParallax2(const FeaturePerId &it_per_id, int frame_count);
-    double compensated_tree_Parallax2(const TreePerId &it_per_id, int frame_count);
+    double compensated_tree_Parallax2(const ModelNode &node, int frame_count);
     const Matrix3d *Rs;
     Matrix3d ric[2];
 };

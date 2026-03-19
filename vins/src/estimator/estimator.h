@@ -204,5 +204,5 @@ class Estimator
 
     list<FeaturePerId> prev_deb_feature;
     
-    list<TreePerId> prev_deb_t_feature;
+    ModelForest prev_deb_t_feature;
 };

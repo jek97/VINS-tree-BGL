@@ -1170,8 +1170,7 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
         K_mat = Eigen::Map<Eigen::Matrix<double, 3, 3, Eigen::RowMajor>>(K_vec.data());
     }
     
-    // TODO: adapt trackForest to accept ObservedForest (deferred – next refactor step).
-    // evaluate_fd(cur_forest);
+    evaluate_fd(cur_forest);
     
     vector<pair<int, vector<pair<pair<string, string>, double>>>> complete_matches;
     if(prev_forest.size() > 0)

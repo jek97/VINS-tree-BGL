@@ -14,23 +14,6 @@ int FeaturePerId::endFrame()
     return start_frame + feature_per_frame.size() - 1;
 }
 
-int TreePerId::endFrame()
-{
-    return tree_per_frame.back().frame;
-}
-
-bool TreePerId::has_frame(int frame) const // NEW
-{
-    // check if the feature has an observation at the frame
-    for(const auto& obs : tree_per_frame)
-    {
-        if(obs.frame == frame)
-        {
-            return true;
-        }
-    }
-    return false;
-}
 
 FeatureManager::FeatureManager(Matrix3d _Rs[])
     : Rs(_Rs)
@@ -72,12 +55,14 @@ int FeatureManager::getFeatureCount()
 int FeatureManager::get_tree_FeatureCount()
 {
     int cnt = 0;
-    for (auto &it : t_feature)
-    {
-        it.used_num = it.tree_per_frame.size();
-        cnt++;
-    }
-    
+    for (auto &tree : t_feature)
+        for (int v = 0; v < (int)boost::num_vertices(tree); ++v)
+        {
+            ModelNode &node = tree[v];
+            node.used_num = node.tree_per_frame.size();
+            if (node.used_num >= 3)
+                cnt++;
+        }
     return cnt;
 }
 
@@ -94,7 +79,7 @@ void FeatureManager::logMessage(const std::string& message)
     logFile << message << std::endl;
 }
 
-bool FeatureManager::addFeatureTreeCheckParallax(int frame_count, const double header, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const pair<double, vector<TreeNode>> &tree, double td)
+bool FeatureManager::addFeatureTreeCheckParallax(int frame_count, const double header, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const pair<double, vector<pair<int, ObservedTree>>> &tree, double td)
 {
     ///// LOG /////
     std::ostringstream oss;
@@ -143,54 +128,48 @@ bool FeatureManager::addFeatureTreeCheckParallax(int frame_count, const double h
         }
     }
 
-    int last_t_track_num = 0; // number of features that has been already found in the previous frames
-    int new_t_feature_num = 0; // number of new feature encountered  with the current frame
-    int long_t_track_num = 0; // number of features that has been already encountered in the previous frames, for at least 4 frames
-    oss << "tree features: " << std::endl;
-    for (auto &id_t_pts : tree.second)
-    {   
-        //std::cout << id_t_pts.id << " ";
-        TreePerFrame t_per_fra(id_t_pts, td, frame_count); // add the tree point (with x, y, z, v_x, v_y, v_z, fd, parent, sons) in the t_per_frame variable together with the time offset td
-        int feature_id = id_t_pts.id; // get the feature_id
-        auto it = find_if(t_feature.begin(), t_feature.end(), [feature_id](const TreePerId &it) 
-                      {
-        return it.feature_id == feature_id;
-                  }); // search in the t_feature vector, form the beginning to the end if the feature id is present, it return a pointer to the element in the t_feature vector that has the same feature_id, or if no such element exists it return t_feature.end()
-        if (it == t_feature.end()) // if it's the first time we encounter a tree feature with that feature_id
+    // NOTE: prev_idx != -1 (matched tree) is treated the same as -1 (new tree) until
+    // the model-forest update pipeline is implemented further downstream.
+    int last_t_track_num = 0; // always 0 until matched-tree update is implemented
+    int new_t_feature_num = 0;
+    int long_t_track_num = 0; // always 0 until multi-frame tracking is implemented
+    for (const auto &[prev_idx, obs_tree] : tree.second)
+    {
+        ModelTree model_tree;
+
+        // copy vertices: convert each ObservedNode to a ModelNode with its first TreePerFrame
+        // vertex descriptors are positional (vecS), so we add them in order 0..N-1
+        for (int v = 0; v < (int)boost::num_vertices(obs_tree); ++v)
         {
-            oss << "    new feature " << feature_id << " add feature " << std::endl;
-            t_feature.push_back(TreePerId(feature_id, frame_count)); // add the feature_id in the feature vector, with the associated frame_count (counting the first frame in which we saw this feature)
-            t_feature.back().tree_per_frame.push_back(t_per_fra); // in this tree feature, under the tree_per_frame field add the point data (x, y, z, v_x, v_y, v_z, parents, sons)
-            new_t_feature_num++; // increase the number of new feature encountered  with the current frame
+            const ObservedNode &obs_node = obs_tree[v];
+            ModelNode model_node(obs_node.id, frame_count);
+            model_node.tree_per_frame.emplace_back(obs_node, td, frame_count);
+            boost::add_vertex(model_node, model_tree);
+            new_t_feature_num++;
         }
-        else if (it->feature_id == feature_id) // if the tree feature was already in the feature vector
-        {   
-            oss << "    old feature " << feature_id << " add observation" << std::endl;
-            it->tree_per_frame.push_back(t_per_fra); // in this tree feature, under the tree_per_frame field add the point data (x, y, z, v_x, v_y, v_z, parents, sons) obtained in the current frame
-            last_t_track_num++; // increase the number of features that has been already found in the previous frames
-            if( it-> tree_per_frame.size() >= 3) // if the feature has been encounter in at least 4 previous frames
-                long_t_track_num++; // increase the number of features that has been already encountered in the previous frames, for at least 4 frames
-        }
+
+        // copy edges, preserving the tree structure
+        auto [ei, ei_end] = boost::edges(obs_tree);
+        for (; ei != ei_end; ++ei)
+            boost::add_edge(boost::source(*ei, obs_tree), boost::target(*ei, obs_tree), model_tree);
+
+        t_feature.push_back(std::move(model_tree));
     }
-    oss << "Total: \nnormal features: new features " << new_feature_num << " old features " << last_track_num << "\ntree features: new features " << new_t_feature_num << " old features " << last_t_track_num << std::endl;
-    logMessage(oss.str());
-    ///// LOG /////
 
     ///// LOG /////
     std::ostringstream oss1;
-    oss1 << "=========================================================================\nFM accumulator timer at frame count " << frame_count << std::endl;
+    oss1 << "=========================================================================\nFM buffer update at frame_count=" << frame_count
+         << "\nnormal: new=" << new_feature_num << " tracked=" << last_track_num << " long=" << long_track_num
+         << "\ntree:   new_nodes=" << new_t_feature_num
+         << " (matched-tree update pending)"
+         << std::endl;
+    oss << "tree: new_nodes=" << new_t_feature_num << std::endl;
+    logMessage(oss.str());
+    logMessage(oss1.str());
+    ///// LOG /////
 
-    //if (frame_count < 2 || last_track_num < 20)
-    //if (frame_count < 2 || last_track_num < 20 || new_feature_num > 0.5 * last_track_num)
-    //if (frame_count < 2 || last_track_num < 20 || long_track_num < 40 || new_feature_num > 0.5 * last_track_num || last_t_track_num < 20 || long_t_track_num < 5) // if we are at a frame smaller then the third, or with the current frame we encountered less then 20 features already encountered in teh past, of with the current frame we encountered less then 40 features already encountered in the past for at least 4 times, if we encountered new feature twice the number of the already encountered features return TRUE (keyframe)
-    // if (frame_count < 2 || last_track_num < 15 || long_track_num < 30 || new_feature_num > 0.5 * last_track_num || last_t_track_num < 15 || long_t_track_num < 5) // if we are at a frame smaller then the third, or with the current frame we encountered less then 20 features already encountered in teh past, of with the current frame we encountered less then 40 features already encountered in the past for at least 4 times, if we encountered new feature twice the number of the already encountered features return TRUE (keyframe)
-    // {
-    //     oss1 << "Keyframe: for number of new features" << std::endl;
-    //     oss1 << "frame count " << frame_count << " last track num " << last_track_num << " long track num " << long_track_num << " new feature num " << new_feature_num << " last t track num " << last_t_track_num << " long t track num " << long_t_track_num  << std::endl;
-    //     logMessage(oss1.str());
-    //     ///// LOG /////
-    //     return true;
-    // }
+    std::ostringstream oss2;
+    oss2 << "=========================================================================\nFM accumulator timer at frame count " << frame_count << std::endl;
 
     for (auto &it_per_id : feature) // for all the feature already saved, together with the newly discovered with this frame
     {
@@ -201,133 +180,118 @@ bool FeatureManager::addFeatureTreeCheckParallax(int frame_count, const double h
             parallax_num++; // increase the number of feature occured in this frame and last frame
         }
     }
-    for (auto &it_t_per_id : t_feature) // for all the feature already saved, together with the newly discovered with this frame
-    {
-        if (it_t_per_id.has_frame(frame_count - 2) && it_t_per_id.has_frame(frame_count - 1)) // if the feature first appearence is farthest then 2 frames from the current one and [the sum of the first appearence of the feature (in frames) plus the number of time we ennocuntered it is bigger then the actual frame count] = if the feature appeared the first time at least in the previous frame and it also appeared in the current frame
+    // parallax contribution from tree nodes that have observations at frame_count-2 and frame_count-1
+    for (const auto &model_tree : t_feature)
+        for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
         {
-            parallax_tree_sum += compensated_tree_Parallax2(it_t_per_id, frame_count); // get the distance of the feature in the image between the last two frames in whic it appeared
-            parallax_tree_num++; // increase the number of feature occured in this frame and last frame
+            const ModelNode &node = model_tree[v];
+            if (node.has_frame(frame_count - 2) && node.has_frame(frame_count - 1))
+            {
+                parallax_tree_sum += compensated_tree_Parallax2(node, frame_count);
+                parallax_tree_num++;
+            }
         }
-    }
-    //if (frame_count < 2 || last_track_num < 50 || long_track_num < 15  || last_t_track_num < 20 || long_t_track_num < 5) // if we are at a frame smaller then the third, or with the current frame we encountered less then 20 features already encountered in teh past, of with the current frame we encountered less then 40 features already encountered in the past for at least 4 times, if we encountered new feature twice the number of the already encountered features return TRUE (keyframe)
-    //if(frame_count < 2 || last_track_num < 20 || last_t_track_num < 10 || (last_track_num + last_t_track_num) < 50)
-    
+
     bool fast_flag = false;
     bool var_flag = false;
     // low pass signals for debugging
     double alpha_1 = 0.9;
-    filtered_last_track_num = alpha_1 * last_track_num + (1 - alpha_1) * filtered_last_track_num;
+    filtered_last_track_num   = alpha_1 * last_track_num   + (1 - alpha_1) * filtered_last_track_num;
     filtered_last_t_track_num = alpha_1 * last_t_track_num + (1 - alpha_1) * filtered_last_t_track_num;
-    filtered_long_track_num = alpha_1 * long_track_num + (1 - alpha_1) * filtered_long_track_num;
+    filtered_long_track_num   = alpha_1 * long_track_num   + (1 - alpha_1) * filtered_long_track_num;
     filtered_long_t_track_num = alpha_1 * long_t_track_num + (1 - alpha_1) * filtered_long_t_track_num;
-    filtered_new_feature_num = alpha_1 * new_feature_num + (1 - alpha_1) * filtered_new_feature_num;
+    filtered_new_feature_num  = alpha_1 * new_feature_num  + (1 - alpha_1) * filtered_new_feature_num;
     filtered_new_t_feature_num = alpha_1 * new_t_feature_num + (1 - alpha_1) * filtered_new_t_feature_num;
 
-    // low pass filter the macthing signals and increment accumulative timer:
     // raw observed value
     double x_k = long_track_num + long_t_track_num;
 
-    oss1 << "x_k " << x_k << " \nX effective max 0 " << X_effective_max << std::endl;
-    
+    oss2 << "x_k " << x_k << " \nX effective max 0 " << X_effective_max << std::endl;
+
     // update effective max
     if (x_k > X_effective_max)
-    {
-        X_effective_max = x_k;              // immediate increase
-    }
+        X_effective_max = x_k;
     else
-    {
-        X_effective_max -= gamma;           // very slow decay
-    }
+        X_effective_max -= gamma;
 
-    // clamp maximum theoretical value and efective one
     X_effective_max = std::min(X_effective_max, static_cast<double>(MAX_CNT + MAX_T_CNT));
 
-    // evaluate error term between the average and the current sample
     double err = x_k - last_track_num_plateau;
 
-    // update variance threshold
     var_threshold = vt_K * std::sqrt(noise_var_estimate);
-    oss1 << "X effective max " << X_effective_max << "\nerr " << err << " \nvar_threshold " << var_threshold << " \nvar_threshold_max " << var_threshold_max << std::endl;
-    if(var_threshold > var_threshold_max)
+    oss2 << "X effective max " << X_effective_max << "\nerr " << err << " \nvar_threshold " << var_threshold << " \nvar_threshold_max " << var_threshold_max << std::endl;
+    if (var_threshold > var_threshold_max)
     {
         var_threshold_max = var_threshold;
-        oss1 << "    updated var_threshold_max to " << var_threshold_max << std::endl;
+        oss2 << "    updated var_threshold_max to " << var_threshold_max << std::endl;
     }
 
-    // update plateau estimate
-    if(std::abs(err) > var_threshold)
-    {  
+    if (std::abs(err) > var_threshold)
+    {
         fast_flag = true;
-        oss1 << "    fast updated last_track_num_plateau from " << last_track_num_plateau;
+        oss2 << "    fast updated last_track_num_plateau from " << last_track_num_plateau;
         last_track_num_plateau += alpha_fast * err;
-        oss1 << " to " << last_track_num_plateau << std::endl;
+        oss2 << " to " << last_track_num_plateau << std::endl;
     }
     else
     {
-        oss1 << "    slow updated last_track_num_plateau from " << last_track_num_plateau;
+        oss2 << "    slow updated last_track_num_plateau from " << last_track_num_plateau;
         last_track_num_plateau += alpha_slow * err;
-        oss1 << " to " << last_track_num_plateau << std::endl;
+        oss2 << " to " << last_track_num_plateau << std::endl;
         var_flag = true;
-        oss1 << "    slow updated noise_var_estimate from " << noise_var_estimate;
-        noise_var_estimate = (1 - betha) * noise_var_estimate + betha * (err * err); // update variance
-        oss1 << " to " << noise_var_estimate << std::endl;
+        oss2 << "    slow updated noise_var_estimate from " << noise_var_estimate;
+        noise_var_estimate = (1 - betha) * noise_var_estimate + betha * (err * err);
+        oss2 << " to " << noise_var_estimate << std::endl;
     }
 
-    // evaluate distance plateau max number of tracked features
     double D_max = std::max(0.0, (X_effective_max - last_track_num_plateau));
-
-    // evaluate timer accumulator rate
     double c_val = (accumulator_timer_thresh / delta_time_0) * (header - prev_time);
     prev_time = header;
-    double rd_k = ((accumulator_timer_thresh - c_val) / std::max(1.0, (X_effective_max - min_track_num - var_threshold_max))) + 1.2;
+    double rd_k   = ((accumulator_timer_thresh - c_val) / std::max(1.0, (X_effective_max - min_track_num - var_threshold_max))) + 1.2;
     double r_D_max = rd_k * std::max(0.0, D_max - var_threshold);
 
-    // update accumulator timer
     accumulator_timer = std::max(0.0, accumulator_timer + r_D_max + c_val);
-    oss1 << "D_max " << D_max << "\nrd_k " << rd_k << "\nr_D_max " << r_D_max << "\nacc_timer " << accumulator_timer << "\nc_val " << c_val << std::endl;
-    // evaluate distance between last and long matching  (works great but i think needs some more works on the optimization size too, the weights)
-    // double last_long = 0;
-    // if(last_track_num)
-    // {
-    //     last_long = static_cast<double>(filtered_last_track_num - filtered_long_track_num) / static_cast<double>(filtered_last_track_num);
-    // }
-    // double last_long_tree = 0;
-    // if(last_t_track_num)
-    // {
-    //     last_long_tree = static_cast<double>(filtered_last_t_track_num - filtered_long_t_track_num) / static_cast<double>(filtered_last_t_track_num);
-    // }
-    // double cumulative_last_long = 0;
-    // if(last_track_num && last_t_track_num)
-    // {
-    //     cumulative_last_long = static_cast<double>((filtered_last_track_num + filtered_last_t_track_num) - (filtered_long_track_num + filtered_long_t_track_num)) / static_cast<double>(filtered_long_track_num + filtered_last_t_track_num);
-    // }
-    oss1 << "=========================================================================\nFM keyframe selection at frame count " << frame_count << std::endl;
-    if((frame_count < 5)  || (accumulator_timer > accumulator_timer_thresh))
+    oss2 << "D_max " << D_max << "\nrd_k " << rd_k << "\nr_D_max " << r_D_max << "\nacc_timer " << accumulator_timer << "\nc_val " << c_val << std::endl;
+
+    // helper lambda to compute par / tree_par strings for logging
+    auto par_str = [&]() -> std::string {
+        std::ostringstream s;
+        s << "parallax " << (parallax_num ? parallax_sum / parallax_num : 0.0)
+          << " tree parallax " << (parallax_tree_num ? parallax_tree_sum / parallax_tree_num : 0.0);
+        return s.str();
+    };
+    auto stats_str = [&](const char *label) -> std::string {
+        std::ostringstream s;
+        s << label
+          << " frame=" << frame_count
+          << " last_trk=" << last_track_num << " long_trk=" << long_track_num
+          << " new_feat=" << filtered_new_feature_num
+          << " last_t=" << last_t_track_num << " long_t=" << long_t_track_num
+          << " new_t=" << filtered_new_t_feature_num
+          << " filt_last=" << filtered_last_track_num << " filt_long=" << filtered_long_track_num
+          << " filt_last_t=" << filtered_last_t_track_num << " filt_long_t=" << filtered_long_t_track_num
+          << " plateau=" << last_track_num_plateau << " acc=" << accumulator_timer
+          << " var_thr=" << var_threshold << " fast=" << fast_flag << " var=" << var_flag;
+        return s.str();
+    };
+
+    oss2 << "=========================================================================\nFM keyframe selection at frame count " << frame_count << std::endl;
+    if ((frame_count < 5) || (accumulator_timer > accumulator_timer_thresh))
     {
-        oss1 << "Keyframe: for number of new features" << std::endl;
-        oss1 << "frame count " << frame_count << " last track num " << last_track_num << " long track num " << long_track_num << " new feature num " << filtered_new_feature_num << " last t track num " << last_t_track_num << " long t track num " << long_t_track_num << " new t feature num " << filtered_new_t_feature_num << " filtered last track num " << filtered_last_track_num << " filtered long track num " << filtered_long_track_num << " filtered last t track num " << filtered_last_t_track_num << " filtered long t track num " << filtered_long_t_track_num << " last_track_num_plateau " << last_track_num_plateau << " accumulator_timer " << accumulator_timer << " var_threshold " << var_threshold << " fast_flag " << fast_flag << " var_flag " << var_flag << std::endl;
-        
-        double par = 0;
-        if(parallax_num != 0)
-            par = parallax_sum / parallax_num;
-        double tree_par = 0;
-        if(parallax_tree_num != 0)
-            tree_par = parallax_tree_sum / parallax_tree_num;
-        oss1 << "parallax " << par << " tree parallax " << tree_par << std::endl;
-        logMessage(oss1.str());
+        oss2 << stats_str("Keyframe(accumulator)") << std::endl << par_str() << std::endl;
+        logMessage(oss2.str());
         ///// LOG /////
         accumulator_timer = 0;
-        
         return true;
     }
-    
-    if (parallax_num + parallax_tree_num == 0 ) // if none of the features appeared in this frame and last frame
+
+    if (parallax_num + parallax_tree_num == 0)
     {
-        oss1 << "Keyframe: for no features in  parallax evaluation" << std::endl;
-        logMessage(oss1.str());
+        oss2 << "Keyframe: no features for parallax evaluation" << std::endl;
+        logMessage(oss2.str());
         ///// LOG /////
         accumulator_timer = 0;
-        return true; // return true (keyframe)
+        return true;
     }
     else
     {
@@ -335,37 +299,13 @@ bool FeatureManager::addFeatureTreeCheckParallax(int frame_count, const double h
         ROS_DEBUG("current parallax: %lf", parallax_sum / parallax_num * FOCAL_LENGTH);
         last_average_parallax = parallax_sum / parallax_num * FOCAL_LENGTH;
 
-        if((FOCAL_LENGTH * (parallax_sum / parallax_num)) + (parallax_tree_sum / parallax_tree_num) >= 300)
-        {
-            oss1 << "Keyframe: for parallax" << std::endl;
-            oss1 << "frame count " << frame_count << " last track num " << last_track_num << " long track num " << long_track_num << " new feature num " << filtered_new_feature_num << " last t track num " << last_t_track_num << " long t track num " << long_t_track_num << " new t feature num " << filtered_new_t_feature_num << " filtered last track num " << filtered_last_track_num << " filtered long track num " << filtered_long_track_num << " filtered last t track num " << filtered_last_t_track_num << " filtered long t track num " << filtered_long_t_track_num << " last_track_num_plateau " << last_track_num_plateau << " accumulator_timer " << accumulator_timer << " var_threshold " << var_threshold << " fast_flag " << fast_flag << " var_flag " << var_flag << std::endl;
-            double par = 0;
-            if(parallax_num != 0)
-                par = parallax_sum / parallax_num;
-            double tree_par = 0;
-            if(parallax_tree_num != 0)
-                tree_par = parallax_tree_sum / parallax_tree_num;
-            oss1 << "parallax " << par << " tree parallax " << tree_par << std::endl;
-            logMessage(oss1.str());
-            ///// LOG /////
+        bool is_keyframe = (FOCAL_LENGTH * (parallax_sum / parallax_num)) + (parallax_tree_num ? parallax_tree_sum / parallax_tree_num : 0.0) >= 300;
+        oss2 << stats_str(is_keyframe ? "Keyframe(parallax)" : "No Keyframe") << std::endl << par_str() << std::endl;
+        logMessage(oss2.str());
+        ///// LOG /////
+        if (is_keyframe)
             accumulator_timer = 0;
-        }
-        else
-        {
-            oss1 << "No Keyframe" << std::endl;
-            oss1 << "frame count " << frame_count << " last track num " << last_track_num << " long track num " << long_track_num << " new feature num " << filtered_new_feature_num << " last t track num " << last_t_track_num << " long t track num " << long_t_track_num << " new t feature num " << filtered_new_t_feature_num << " filtered last track num " << filtered_last_track_num << " filtered long track num " << filtered_long_track_num << " filtered last t track num " << filtered_last_t_track_num << " filtered long t track num " << filtered_long_t_track_num << " last_track_num_plateau " << last_track_num_plateau << " accumulator_timer " << accumulator_timer << " var_threshold " << var_threshold << " fast_flag " << fast_flag << " var_flag " << var_flag << std::endl;
-            double par = 0;
-            if(parallax_num != 0)
-                par = parallax_sum / parallax_num;
-            double tree_par = 0;
-            if(parallax_tree_num != 0)
-                tree_par = parallax_tree_sum / parallax_tree_num;
-            oss1 << "parallax " << par << " tree parallax " << tree_par << std::endl;
-            logMessage(oss1.str());
-            ///// LOG /////
-        }
-            
-        return ((FOCAL_LENGTH * (parallax_sum / parallax_num)) + (parallax_tree_sum / parallax_tree_num) >= 300); // return true if the average parallax is bigger then a threshold
+        return is_keyframe;
     }
 }
 
@@ -482,21 +422,16 @@ void FeatureManager::setDepth(const VectorXd &x)
 void FeatureManager::set_tree_Depth(const VectorXd &x)
 {
     int t_feature_index = -1;
-    for (auto &it_per_id : t_feature)
-    {
-        it_per_id.used_num = it_per_id.tree_per_frame.size();
-        if (it_per_id.used_num < 3)
-            continue;
-        
-        it_per_id.estimated_depth = x(++t_feature_index);
-        
-        if (it_per_id.estimated_depth < 0)
+    for (auto &model_tree : t_feature)
+        for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
         {
-            it_per_id.solve_flag = 2;
+            ModelNode &node = model_tree[v];
+            node.used_num = node.tree_per_frame.size();
+            if (node.used_num < 3)
+                continue;
+            node.estimated_depth = x(++t_feature_index);
+            node.solve_flag = (node.estimated_depth < 0) ? 2 : 1;
         }
-        else
-            it_per_id.solve_flag = 1;
-    }
 }
 
 void FeatureManager::removeFailures()
@@ -536,18 +471,26 @@ void FeatureManager::removeFailures()
         }
             
     }
-    if (USE_TREE) 
+    if (USE_TREE)
     {
-        for (auto it = t_feature.begin(), it_next = t_feature.begin();
-            it != t_feature.end(); it = it_next) // for all the features, init two iterator pointing to the first and second feature 
+        for (auto &model_tree : t_feature)
         {
-            it_next++;
-            if (it->solve_flag == 2) // if some feature has not been optimied (actually useless)
+            // collect vertices to remove (in reverse order to keep indices stable)
+            vector<int> to_remove;
+            for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
+                if (model_tree[v].solve_flag == 2)
+                    to_remove.push_back(v);
+            for (int i = (int)to_remove.size() - 1; i >= 0; --i)
             {
-                t_feature.erase(it); // delete them
+                boost::remove_vertex(to_remove[i], model_tree);
                 tree_features_removed++;
             }
         }
+        // remove trees that became empty
+        t_feature.erase(
+            std::remove_if(t_feature.begin(), t_feature.end(),
+                           [](const ModelTree &t){ return boost::num_vertices(t) == 0; }),
+            t_feature.end());
     }
     ///// LOG /////
     std::ostringstream oss1;
@@ -579,11 +522,10 @@ void FeatureManager::clearDepth()
     for (auto &it_per_id : feature)
         it_per_id.estimated_depth = -1;
 
-    if(USE_TREE)
-    {
-        for (auto &it_per_id : t_feature)
-            it_per_id.estimated_depth = -1;
-    }
+    if (USE_TREE)
+        for (auto &model_tree : t_feature)
+            for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
+                model_tree[v].estimated_depth = -1;
 }
 
 VectorXd FeatureManager::getDepthVector()
@@ -606,15 +548,17 @@ VectorXd FeatureManager::getDepthVector()
 
 VectorXd FeatureManager::get_tree_DepthVector()
 {
-    VectorXd dep_vec(get_tree_FeatureCount()); // init the vector long as the number of features
+    VectorXd dep_vec(get_tree_FeatureCount());
     int feature_index = -1;
-    for (auto &it_per_id : t_feature) // for every feature
-    {
-        it_per_id.used_num = it_per_id.tree_per_frame.size(); // assign the used_num
-        if (it_per_id.used_num < 3) // if smaller then 4 skip the feature
-            continue;
-        dep_vec(++feature_index) = it_per_id.estimated_depth;
-    }
+    for (auto &model_tree : t_feature)
+        for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
+        {
+            ModelNode &node = model_tree[v];
+            node.used_num = node.tree_per_frame.size();
+            if (node.used_num < 3)
+                continue;
+            dep_vec(++feature_index) = node.estimated_depth;
+        }
     return dep_vec;
 }
 
@@ -1128,44 +1072,35 @@ void FeatureManager::initFramePoseByPnP(int frameCnt, Vector3d Ps[], Matrix3d Rs
 
             // run icp p2p or p2l closed form (SVD) to get an initial estimate: 
             // get points correspondences for all the features that apear in the current frame and their first observations
-            for(auto& it_per_id : t_feature) // for each tree feature
-            {
-                if(it_per_id.has_frame(frameCnt)) // if i observed the feature in the current frame
+            for (const auto &model_tree : t_feature)
+                for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
                 {
-                    auto fpf_it = std::find_if(it_per_id.tree_per_frame.begin(), it_per_id.tree_per_frame.end(),
-                                                [frameCnt](const TreePerFrame& fpf) {
-                                                return fpf.frame == frameCnt;
-                                                });
-
-                    // if the feature has an observation at frame frameCnt and at least also another observation and i've optimized the feature anchor point
-                    if ((fpf_it != it_per_id.tree_per_frame.end()) && (it_per_id.tree_per_frame.size() > 2) && (it_per_id.estimated_depth > 0))
-                    {   
-                        // evaluate the old feature position in the world frame 
-                        double depth = it_per_id.estimated_depth;
-                        Eigen::Vector3d anchor_pt_uv = it_per_id.tree_per_frame[0].point.normalized();
-                        Eigen::Vector3d old_t_obsInCam = ric[0] * (depth * anchor_pt_uv) + tic[0];
-                        Eigen::Vector3d old_t_obsInWorld = Rs[it_per_id.start_frame] * old_t_obsInCam + Ps[it_per_id.start_frame];
+                    const ModelNode &node = model_tree[v];
+                    if (!node.has_frame(frameCnt))
+                        continue;
+                    auto fpf_it = std::find_if(node.tree_per_frame.begin(), node.tree_per_frame.end(),
+                                               [frameCnt](const TreePerFrame &fpf){ return fpf.frame == frameCnt; });
+                    if ((fpf_it != node.tree_per_frame.end()) && (node.tree_per_frame.size() > 2) && (node.estimated_depth > 0))
+                    {
+                        double depth = node.estimated_depth;
+                        Eigen::Vector3d anchor_pt_uv = node.tree_per_frame[0].point.normalized();
+                        Eigen::Vector3d old_t_obsInCam   = ric[0] * (depth * anchor_pt_uv) + tic[0];
+                        Eigen::Vector3d old_t_obsInWorld = Rs[node.start_frame] * old_t_obsInCam + Ps[node.start_frame];
                         Eigen::Vector3d old_t_point3d(old_t_obsInWorld.x(), old_t_obsInWorld.y(), old_t_obsInWorld.z());
                         Eigen::Vector3d old_t_norm = Eigen::Vector3d::Zero();
-                        if(ICP_P2L)
+                        if (ICP_P2L)
                         {
-                            Eigen::Vector3d old_t_normInCam = ric[0] * it_per_id.tree_per_frame[0].n;
-                            Eigen::Vector3d old_t_normInWorld = Rs[it_per_id.start_frame] * old_t_normInCam;
+                            Eigen::Vector3d old_t_normInCam  = ric[0] * node.tree_per_frame[0].n;
+                            Eigen::Vector3d old_t_normInWorld = Rs[node.start_frame] * old_t_normInCam;
                             old_t_norm = old_t_normInWorld.normalized();
                         }
-                        
-
-                        // get the current observation of the feature in the camera frame
                         Eigen::Vector3d new_t_point3d(fpf_it->point.x(), fpf_it->point.y(), fpf_it->point.z());
                         old_t_obs.push_back(old_t_point3d);
                         cur_t_obs.push_back(new_t_point3d);
-                        
-                        if(ICP_P2L){
+                        if (ICP_P2L)
                             old_t_normals.push_back(old_t_norm);
-                        }
                     }
                 }
-            }
 
             // evaluate ICP solution and relative conditional number
             // normal ICP with prior tranformation matrix
@@ -1418,23 +1353,20 @@ void FeatureManager::triangulate(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vec
 
     }
 
-    if(USE_TREE)
+    if (USE_TREE)
     {
-        for (auto &it_per_id : t_feature) // for all the features
-        {
-            if (it_per_id.estimated_depth > 0) // if it has already a valid estimated depth, go to the next feature 
-                continue;
-
-            // otherwise extract as initialization depth the depth of the first bservation (anchor point)
-            it_per_id.used_num = it_per_id.tree_per_frame.size(); // save the number of appearence of the feature in the used_num attribute
-            if (it_per_id.used_num < 3) // if there are less then 4 observations of the feature skip and go to the next one
-                continue;
-            double depth = it_per_id.tree_per_frame[0].point.norm();
-            if (depth > 0) // if it's >0 save it in the estimated depth term of the feature (if it's smaller then 0 there has been some error in the evaluation)
-                it_per_id.estimated_depth = depth;
-            else // else init it to INIT_DEPTH 
-                it_per_id.estimated_depth = INIT_DEPTH;
-        }
+        for (auto &model_tree : t_feature)
+            for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
+            {
+                ModelNode &node = model_tree[v];
+                if (node.estimated_depth > 0)
+                    continue;
+                node.used_num = node.tree_per_frame.size();
+                if (node.used_num < 3)
+                    continue;
+                double depth = node.tree_per_frame[0].point.norm();
+                node.estimated_depth = (depth > 0) ? depth : INIT_DEPTH;
+            }
     }
 }
 
@@ -1460,22 +1392,23 @@ void FeatureManager::removeOutlier(set<int> &outlierIndex, set<int> &tree_outlie
     }
     oss << "tree features:" << std::endl;
     if (USE_TREE)
-    {   
-        std::set<int>::iterator it_t_Set;
-        for (auto it = t_feature.begin(), it_next = t_feature.begin(); // for all the features (but creating two pointer to the features)
-            it != t_feature.end(); it = it_next) // 
+    {
+        for (auto &model_tree : t_feature)
         {
-            it_next++; // get the pointer to the next feature ( in this way it will be a fof loop with it the i feature and it_next the i+1 feature)
-            int index = it->feature_id; // get the feature id
-            it_t_Set = tree_outlierIndex.find(index); 
-            if(it_t_Set != tree_outlierIndex.end()) // if it's in the outlier list
-            {
-                t_feature.erase(it); // remove it
-                oss << "    removing " << index << std::endl;
-                //printf("remove outlier %d \n", index);
-            }
+            vector<int> to_remove;
+            for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
+                if (tree_outlierIndex.count(model_tree[v].feature_id))
+                {
+                    oss << "    removing " << model_tree[v].feature_id << std::endl;
+                    to_remove.push_back(v);
+                }
+            for (int i = (int)to_remove.size() - 1; i >= 0; --i)
+                boost::remove_vertex(to_remove[i], model_tree);
         }
-        
+        t_feature.erase(
+            std::remove_if(t_feature.begin(), t_feature.end(),
+                           [](const ModelTree &t){ return boost::num_vertices(t) == 0; }),
+            t_feature.end());
     }
     logMessage(oss.str());
     ///// LOG /////
@@ -1547,49 +1480,46 @@ void FeatureManager::removeBackShiftDepth(Eigen::Matrix3d marg_R, Eigen::Vector3
 
     if (USE_TREE)
     {
-        for (auto it = t_feature.begin(), it_next = t_feature.begin();
-            it != t_feature.end(); it = it_next) // for all the features, init two iterator pointing to the first and second feature 
+        for (auto &model_tree : t_feature)
         {
-            it_next++;
-
-            if (it->start_frame != 0) // if the first feature first appearence is different from 0 decrease it
-            {   
-                it->start_frame--;
-                for (auto& fpf : it->tree_per_frame) 
-                    {
-                        fpf.frame--; // decrease the frame attribute of each FeaturePerFrame
-                    }
-            }
-            else
+            vector<int> to_remove;
+            for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
             {
-                Eigen::Vector3d anchor_pt = it->tree_per_frame[0].point.normalized(); // get the oldest position observed of the tree feature
-                it->tree_per_frame.erase(it->tree_per_frame.begin()); // delete the first appearence of the feature
-                for (auto& fpf : it->tree_per_frame) 
+                ModelNode &node = model_tree[v];
+                if (node.start_frame != 0)
                 {
-                    fpf.frame--; // decrease the frame attribute of each FeaturePerFrame
-                }
-
-                if (it->tree_per_frame.size() < 2) // if you have less then 2 observation
-                {
-                    tree_features_removed++;
-                    t_feature.erase(it); // delete the feature and process the next one
-                    continue;
+                    node.start_frame--;
+                    for (auto &fpf : node.tree_per_frame) fpf.frame--;
                 }
                 else
                 {
-                    Eigen::Vector3d pts_i = anchor_pt * it->estimated_depth; // get the feature 3d position
-                    Eigen::Vector3d w_pts_i = marg_R * pts_i + marg_P; // project it in the new frame 
-                    Eigen::Vector3d pts_j = new_R.transpose() * (w_pts_i - new_P); // project it in the camera frame (i guess?)
-                    double dep_j = pts_j(2); // re-evaluate the depth
-                    if (dep_j > 0) // if valid assign it to the estimated depth
-                        it->estimated_depth = dep_j;
-                    else // otherwise give it the INIT_DEPTH value
-                        it->estimated_depth = INIT_DEPTH;
+                    Eigen::Vector3d anchor_pt = node.tree_per_frame[0].point.normalized();
+                    node.tree_per_frame.erase(node.tree_per_frame.begin());
+                    for (auto &fpf : node.tree_per_frame) fpf.frame--;
 
-                    it->start_frame = it->tree_per_frame[0].frame;
+                    if (node.tree_per_frame.size() < 2)
+                    {
+                        to_remove.push_back(v);
+                        tree_features_removed++;
+                    }
+                    else
+                    {
+                        Eigen::Vector3d pts_i   = anchor_pt * node.estimated_depth;
+                        Eigen::Vector3d w_pts_i = marg_R * pts_i + marg_P;
+                        Eigen::Vector3d pts_j   = new_R.transpose() * (w_pts_i - new_P);
+                        double dep_j = pts_j(2);
+                        node.estimated_depth = (dep_j > 0) ? dep_j : INIT_DEPTH;
+                        node.start_frame = node.tree_per_frame[0].frame;
+                    }
                 }
             }
+            for (int i = (int)to_remove.size() - 1; i >= 0; --i)
+                boost::remove_vertex(to_remove[i], model_tree);
         }
+        t_feature.erase(
+            std::remove_if(t_feature.begin(), t_feature.end(),
+                           [](const ModelTree &t){ return boost::num_vertices(t) == 0; }),
+            t_feature.end());
     }
 
     ///// LOG /////
@@ -1663,37 +1593,37 @@ void FeatureManager::removeBack()
 
     if (USE_TREE)
     {
-        for (auto it = t_feature.begin(), it_next = t_feature.begin();
-            it != t_feature.end(); it = it_next) // for all the features, init two iterator pointing to the first and second feature 
+        for (auto &model_tree : t_feature)
         {
-            it_next++;
-
-            if (it->start_frame != 0) // if the first feature first appearence is different from 0 decrease it
+            vector<int> to_remove;
+            for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
             {
-                it->start_frame--;
-                for (auto& fpf : it->tree_per_frame) 
+                ModelNode &node = model_tree[v];
+                if (node.start_frame != 0)
                 {
-                    fpf.frame--; // ? decrease the frame attribute of each FeaturePerFrame
-                }
-            }
-            else
-            {
-                it->tree_per_frame.erase(it->tree_per_frame.begin()); // delete the first appearence of the feature
-                for (auto& fpf : it->tree_per_frame) 
-                {
-                    fpf.frame--; // decrease the frame attribute of each FeaturePerFrame
-                }
-                if (it->tree_per_frame.size() == 0) // if you don't have observations of the feature
-                {
-                    t_feature.erase(it); // delete the whole feature
-                    tree_features_removed++;
+                    node.start_frame--;
+                    for (auto &fpf : node.tree_per_frame) fpf.frame--;
                 }
                 else
                 {
-                    it->start_frame = it->tree_per_frame[0].frame; // reset the start frame (in the case the feature has been seen for one frame yes, one not and one yes)
+                    node.tree_per_frame.erase(node.tree_per_frame.begin());
+                    for (auto &fpf : node.tree_per_frame) fpf.frame--;
+                    if (node.tree_per_frame.empty())
+                    {
+                        to_remove.push_back(v);
+                        tree_features_removed++;
+                    }
+                    else
+                        node.start_frame = node.tree_per_frame[0].frame;
                 }
             }
+            for (int i = (int)to_remove.size() - 1; i >= 0; --i)
+                boost::remove_vertex(to_remove[i], model_tree);
         }
+        t_feature.erase(
+            std::remove_if(t_feature.begin(), t_feature.end(),
+                           [](const ModelTree &t){ return boost::num_vertices(t) == 0; }),
+            t_feature.end());
     }
 
     ///// LOG /////
@@ -1770,56 +1700,53 @@ void FeatureManager::removeFront(int frame_count)
     }
     vector<int> removed_id;
     if (USE_TREE)
-    {   
-        for (auto it = t_feature.begin(), it_next = t_feature.begin(); it != t_feature.end(); it = it_next) // for all the features, init two iterator pointing to the first and second feature 
+    {
+        for (auto &model_tree : t_feature)
         {
-            it_next++;
-
-            if (it->start_frame == frame_count) // if the start frame is equal to the frame count 
+            vector<int> to_remove;
+            for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
             {
-                it->start_frame--; // decrease it
-                for (auto& fpf : it->tree_per_frame) 
+                ModelNode &node = model_tree[v];
+                if (node.start_frame == frame_count)
                 {
-                    fpf.frame--; // ? decrease the frame attribute of each FeaturePerFrame
+                    node.start_frame--;
+                    for (auto &fpf : node.tree_per_frame) fpf.frame--;
                 }
-            }
-            else
-            {   
-                if (it->endFrame() < frame_count - 1) // if the feature last frame apperence is smaller then the second to last frame count ? skip it
-                    continue;
-                if(it->has_frame(WINDOW_SIZE - 1))
+                else
                 {
-                    auto fpf_it = std::find_if(it->tree_per_frame.begin(), it->tree_per_frame.end(),
-                                [WINDOW_SIZE](const TreePerFrame& item) {
-                                    return item.frame == WINDOW_SIZE - 1;
-                                });
-                    if (fpf_it != it->tree_per_frame.end())
-                    {                          
-                        it->tree_per_frame.erase(fpf_it); // Erase by iterator the frame WINDOW_SIZE -1
-                    }
-                }
-                // decrease any feature observation with frame > WINDOW_SIZE - 1 by 1
-                for(auto& obs : it->tree_per_frame) 
-                {
-                    if(obs.frame > WINDOW_SIZE - 1)
+                    if (node.endFrame() < frame_count - 1)
+                        continue;
+                    if (node.has_frame(WINDOW_SIZE - 1))
                     {
-                        obs.frame -= 1;
+                        auto fpf_it = std::find_if(node.tree_per_frame.begin(), node.tree_per_frame.end(),
+                                                   [](const TreePerFrame &item){ return item.frame == WINDOW_SIZE - 1; });
+                        if (fpf_it != node.tree_per_frame.end())
+                            node.tree_per_frame.erase(fpf_it);
+                    }
+                    for (auto &obs : node.tree_per_frame)
+                        if (obs.frame > WINDOW_SIZE - 1) obs.frame -= 1;
+
+                    if (node.tree_per_frame.empty())
+                    {
+                        removed_id.push_back(node.feature_id);
+                        to_remove.push_back(v);
+                        tree_features_removed++;
+                    }
+                    else if (node.start_frame != node.tree_per_frame[0].frame)
+                    {
+                        std::cout << "REMOVE FRONT ERROR prev start frame " << node.start_frame
+                                  << " new one " << node.tree_per_frame[0].frame << std::endl;
+                        node.start_frame = node.tree_per_frame[0].frame;
                     }
                 }
-                if (it->tree_per_frame.size() == 0){ // if you no longer have observations of the feature
-                    removed_id.push_back(it->feature_id);
-                    t_feature.erase(it); // delete it
-
-                    tree_features_removed++;
-                }
-                else if(it->start_frame != it->tree_per_frame[0].frame)
-                {
-                    std::cout << "REMOVE FRONT ERROR prev start frame " << it->start_frame << " new one " << it->tree_per_frame[0].frame << std::endl;
-                    it->start_frame = it->tree_per_frame[0].frame;
-                }
             }
+            for (int i = (int)to_remove.size() - 1; i >= 0; --i)
+                boost::remove_vertex(to_remove[i], model_tree);
         }
-        std::cout << std::endl;
+        t_feature.erase(
+            std::remove_if(t_feature.begin(), t_feature.end(),
+                           [](const ModelTree &t){ return boost::num_vertices(t) == 0; }),
+            t_feature.end());
     }
     ///// LOG /////
     std::ostringstream oss1;
@@ -1887,68 +1814,41 @@ double FeatureManager::compensatedParallax2(const FeaturePerId &it_per_id, int f
     return ans;
 }
 
-double FeatureManager::compensated_tree_Parallax2(const TreePerId &it_per_id, int frame_count)
+double FeatureManager::compensated_tree_Parallax2(const ModelNode &node, int frame_count)
 {
-    // get T_tree_lcam
+    // build T_tree_lcam from T_lcam_tree
     Eigen::Matrix3d R_lcam_tree = T_lcam_tree.block<3, 3>(0, 0);
     Eigen::Vector3d P_lcam_tree = T_lcam_tree.block<3, 1>(0, 3);
-    // evaluate the inverce tranformation matrix
     Eigen::Matrix3d R_tree_lcam = R_lcam_tree.transpose();
-    Eigen::Vector3d P_tree_lcam = - R_tree_lcam * P_lcam_tree;
-    // assemble the final matrix
-    Eigen::MatrixXd T_prov = Eigen::MatrixXd(3, 4);
-    T_prov << R_tree_lcam, P_tree_lcam;
-    Eigen::RowVector4d rowVec(0, 0, 0, 1); 
-                
+    Eigen::Vector3d P_tree_lcam = -R_tree_lcam * P_lcam_tree;
     Eigen::Matrix4d T_tree_lcam;
-    T_tree_lcam << T_prov, rowVec;
+    T_tree_lcam << R_tree_lcam, P_tree_lcam, Eigen::RowVector4d(0, 0, 0, 1);
 
     Eigen::VectorXd K_vec(9);
-    K_vec << ref_frame["tree_camera"].k[0], 0.0, ref_frame["tree_camera"].k[2], 0.0, ref_frame["tree_camera"].k[4], ref_frame["tree_camera"].k[5], 0.0, 0.0, 1.0;
+    K_vec << ref_frame["tree_camera"].k[0], 0.0, ref_frame["tree_camera"].k[2],
+             0.0, ref_frame["tree_camera"].k[4], ref_frame["tree_camera"].k[5],
+             0.0, 0.0, 1.0;
     Eigen::Matrix3d K_mat = Eigen::Map<Eigen::Matrix<double, 3, 3, Eigen::RowMajor>>(K_vec.data());
 
-    //parallax betwwen seconde last frame and third last frame
-    Eigen::Vector2d p_img_i, p_img_j;
-    for(const auto& it_per_frame : it_per_id.tree_per_frame)
+    // project a 3-D point (in lcam frame) to image pixel using T_lcam_tree and K
+    auto project = [&](const TreePerFrame &obs) -> Eigen::Vector2d {
+        Eigen::Vector4d p_h;
+        p_h << obs.point.x(), obs.point.y(), obs.point.z(), 1.0;
+        Eigen::Vector3d p_cam = (T_lcam_tree * p_h).head<3>();
+        Eigen::Vector3d p_uv  = K_mat * p_cam;
+        return Eigen::Vector2d(p_uv[0] / p_uv[2], p_uv[1] / p_uv[2]);
+    };
+
+    // parallax between the observation at frame_count-2 and frame_count-1
+    Eigen::Vector2d p_img_i = Eigen::Vector2d::Zero();
+    Eigen::Vector2d p_img_j = Eigen::Vector2d::Zero();
+    for (const auto &obs : node.tree_per_frame)
     {
-        if(it_per_frame.frame == frame_count - 2)
-        {
-            // evaluate the point position in the image 
-            // get the 3d position
-            Eigen::Vector4d p_3d_h;
-            p_3d_h << it_per_frame.point.x(), it_per_frame.point.y(), it_per_frame.point.z(), 1;
-                                
-            // project the point in the tree view
-            Eigen::Vector4d p_3dt_h = T_lcam_tree * p_3d_h;
-            Eigen::Vector3d p_3dt = p_3dt_h.block<3, 1>(0, 0);
-            
-            // project in the image plane
-            Eigen::Vector3d p_uvs = K_mat * p_3dt;
-            Eigen::Vector2d p_img;
-            p_img_i << p_uvs[0] / p_uvs[2], p_uvs[1] / p_uvs[2];
-        }
-        else if(it_per_frame.frame == frame_count - 1)
-        {
-            // evaluate the point position in the image 
-            // get the 3d position
-            Eigen::Vector4d p_3d_h;
-            p_3d_h << it_per_frame.point.x(), it_per_frame.point.y(), it_per_frame.point.z(), 1;
-                                
-            // project the point in the tree view
-            Eigen::Vector4d p_3dt_h = T_lcam_tree * p_3d_h;
-            Eigen::Vector3d p_3dt = p_3dt_h.block<3, 1>(0, 0);
-            
-            // project in the image plane
-            Eigen::Vector3d p_uvs = K_mat * p_3dt;
-            Eigen::Vector2d p_img;
-            p_img_j << p_uvs[0] / p_uvs[2], p_uvs[1] / p_uvs[2];
-        }
+        if (obs.frame == frame_count - 2) p_img_i = project(obs);
+        else if (obs.frame == frame_count - 1) p_img_j = project(obs);
     }
-    
-    double ans = 0;
-    double du = p_img_i[0] - p_img_j[0], dv = p_img_i[1] - p_img_j[1];
 
-    ans = max(ans, sqrt(du * du + dv * dv)); 
-
-    return ans;
+    double du = p_img_i[0] - p_img_j[0];
+    double dv = p_img_i[1] - p_img_j[1];
+    return std::sqrt(du * du + dv * dv);
 }
