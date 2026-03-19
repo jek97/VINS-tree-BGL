@@ -117,7 +117,7 @@ public:
     cv::Mat drawForest(const ObservedForest &forest, const Eigen::Matrix4d T_tree_lcam, const vector<cv::Scalar> circle_colors, const vector<cv::Scalar> line_colors);
     void setPrediction(map<int, Eigen::Vector3d> &predictPts);
     double distance(cv::Point2f &pt1, cv::Point2f &pt2);
-    void removeOutliers(set<int> &removePtsIds, set<int> &remove_t_PtsIds);
+    void removeOutliers(set<int> &removePtsIds);
     cv::Mat getTrackImage();
     std::tuple<cv::Mat, sensor_msgs::msg::CameraInfo, double> getTreeMatch();
     bool inBorder(const cv::Point2f &pt);
@@ -148,13 +148,11 @@ public:
     int n_id;
     bool hasPrediction;
 
-    ObservedForest prev_forest;
     ObservedForest last_model_forest; // world-frame model forest from the estimator, used for matching
     Eigen::Matrix3d last_R;           // last known robot rotation (world←IMU)
     Eigen::Vector3d last_P;           // last known robot position in world frame
     Eigen::Matrix3d last_ric;         // camera←IMU rotation extrinsic
     Eigen::Vector3d last_tic;         // camera←IMU translation extrinsic
-    double _prev_time;
     int new_ids = 0;
 
     Eigen::Matrix3d K_mat; // defined to reproject the 3d point in the image for visualization purposes

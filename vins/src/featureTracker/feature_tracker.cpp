@@ -1235,9 +1235,13 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
                     ++n_f_match;
                     cn.id        = pn.id;
                     cn.track_cnt = pn.track_cnt + 1;
-                    cn.v_x = (cn.x - pn_cam.x()) / (_cur_time - _prev_time);
-                    cn.v_y = (cn.y - pn_cam.y()) / (_cur_time - _prev_time);
-                    cn.v_z = (cn.z - pn_cam.z()) / (_cur_time - _prev_time);
+                    const double dt = _cur_time - pn.timestamp;
+                    if (dt > 0)
+                    {
+                        cn.v_x = (cn.x - pn_cam.x()) / dt;
+                        cn.v_y = (cn.y - pn_cam.y()) / dt;
+                        cn.v_z = (cn.z - pn_cam.z()) / dt;
+                    }
                 }
             }
         }
@@ -1324,10 +1328,6 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
         for (int v = 0; v < (int)boost::num_vertices(tree); ++v)
             if (tree[v].id < 0)
                 tree[v].id = new_ids++;
-
-    // save for next iteration (used by removeOutliers)
-    prev_forest = cur_forest;
-    _prev_time = _cur_time;
 
     // build output: one ObservedTree per current tree, tagged with the index
     // of the previous-forest tree it was matched against (-1 = unmatched)
@@ -1574,9 +1574,8 @@ void FeatureTracker::setPrediction(map<int, Eigen::Vector3d> &predictPts)
 }
 
 
-void FeatureTracker::removeOutliers(set<int> &removePtsIds, set<int> &remove_t_PtsIds)
+void FeatureTracker::removeOutliers(set<int> &removePtsIds)
 {
-    ///// LOG /////
     std::ostringstream oss;
     oss << "=========================================================================\nFT ro removing outliers from prev features\nnormal features: " << std::endl;
 
@@ -1596,25 +1595,6 @@ void FeatureTracker::removeOutliers(set<int> &removePtsIds, set<int> &remove_t_P
     reduceVector(prev_pts, status);
     reduceVector(ids, status);
     reduceVector(track_cnt, status);
-
-    if (USE_TREE)
-    {   
-        oss << "tree features:" << std::endl;
-        for (ObservedTree& prev_tree : prev_forest)
-        {
-            // iterate backwards so remove_vertex renumbering doesn't skip vertices
-            for (int v = (int)boost::num_vertices(prev_tree) - 1; v >= 0; --v)
-            {
-                if (remove_t_PtsIds.count(prev_tree[v].id))
-                {
-                    oss << "    remove ex id " << prev_tree[v].ex_id << " id " << prev_tree[v].id << std::endl;
-                    boost::clear_vertex(v, prev_tree);
-                    boost::remove_vertex(v, prev_tree);
-                }
-            }
-        }
-    }
-
 }
 
 

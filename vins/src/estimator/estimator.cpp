@@ -870,7 +870,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         f_manager.removeOutlier(removeIndex, empty_set); // remove the outlier from the features
         if (! MULTIPLE_THREAD) // in case of single thred
         {
-            featureTracker.removeOutliers(removeIndex, empty_set); // use a different function removing the points from different lists
+            featureTracker.removeOutliers(removeIndex);
             predictPtsInNextFrame(); // predict the points in the next frame and add them to the predicted point for their matching with the next frame features
         }
             
@@ -1089,7 +1089,7 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
         f_manager.removeOutlier(removeIndex, remove_tree_Index); // remove the outlier from the features 
         if (! MULTIPLE_THREAD) // in case of single thred
         {
-            featureTracker.removeOutliers(removeIndex, remove_tree_Index); // use a different function removing the points from different lists TODO FOR TREE (check the result and decide)
+            featureTracker.removeOutliers(removeIndex);
             predictPtsInNextFrame(); // predict the points in the next frame and add them to the predicted point for their matching with the next frame features TODO FOR TREE
         }
                 
@@ -1241,6 +1241,7 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
                         Vector3d pts_imu = ric[0] * (node.estimated_depth * pt0.normalized()) + tic[0];
                         Vector3d pts_w   = Rs[anchor] * pts_imu + Ps[anchor];
                         obs.x = pts_w.x(); obs.y = pts_w.y(); obs.z = pts_w.z();
+                        obs.timestamp = Headers[anchor];
                     }
                     else if (!node.tree_per_frame.empty())
                     {
@@ -1249,6 +1250,7 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
                         Vector3d pts_imu = ric[0] * latest.point + tic[0];
                         Vector3d pts_w   = Rs[latest.frame] * pts_imu + Ps[latest.frame];
                         obs.x = pts_w.x(); obs.y = pts_w.y(); obs.z = pts_w.z();
+                        obs.timestamp = Headers[latest.frame];
                     }
 
                     boost::add_vertex(obs, obs_tree);
