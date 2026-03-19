@@ -284,7 +284,7 @@ void Estimator::inputForest(double t, std::pair<bool, ObservedForest> &forest)
     {
         t_featureFrame.first = true;
         {
-            std::lock_guard<std::mutex> lk(Mlmodel);
+            std::scoped_lock lk(Mlmodel, featureTracker.Mlmodel);
             featureTracker.last_model_forest = last_model_forest;
         }
         featureTracker.last_R   = Rs[WINDOW_SIZE];
@@ -293,8 +293,7 @@ void Estimator::inputForest(double t, std::pair<bool, ObservedForest> &forest)
         featureTracker.last_tic = tic[0];
         t_featureFrame.second = featureTracker.trackForest(t, forest.second);
         auto [joinedImage, cam_info, match_time] = featureTracker.getTreeMatch();
-        if (!joinedImage.empty())
-            pubTreeMatchImage(joinedImage, cam_info, match_time);
+        pubTreeMatchImage(joinedImage, cam_info, match_time);
     }
     else
     {

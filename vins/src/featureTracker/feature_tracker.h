@@ -21,6 +21,7 @@
 #include <fstream> // debug
 #include <execinfo.h>
 #include <csignal>
+#include <mutex>
 #include <random>
 #include <algorithm>
 #include <limits>
@@ -148,6 +149,7 @@ public:
     int n_id;
     bool hasPrediction;
 
+    std::mutex     Mlmodel;           // protects last_model_forest
     ObservedForest last_model_forest; // world-frame model forest from the estimator, used for matching
     Eigen::Matrix3d last_R;           // last known robot rotation (world←IMU)
     Eigen::Vector3d last_P;           // last known robot position in world frame
