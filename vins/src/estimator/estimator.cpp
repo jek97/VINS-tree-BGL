@@ -1207,10 +1207,59 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
         
         slideWindow(); // slide all the quantities in the window
         f_manager.removeFailures(); // delete features for which wasn't possible to do the optimization?
+
+        // Rebuild last_model_forest: world-frame ObservedForest summarising t_feature.
+        // Done here — after all removals — so estimated_depth and poses are final.
+        {
+            std::lock_guard<std::mutex> lk(Mlmodel);
+            last_model_forest.clear();
+            for (const auto &model_tree : f_manager.t_feature)
+            {
+                ObservedTree obs_tree;
+                const int nv = (int)boost::num_vertices(model_tree);
+
+                for (int v = 0; v < nv; ++v)
+                {
+                    const ModelNode &node = model_tree[v];
+                    ObservedNode obs;
+                    obs.id        = node.feature_id;
+                    obs.track_cnt = (int)node.tree_per_frame.size();
+
+                    if (node.estimated_depth > 0 && !node.tree_per_frame.empty())
+                    {
+                        // Anchor-point projection: depth along first observation ray.
+                        int anchor = node.start_frame;
+                        const Vector3d &pt0 = node.tree_per_frame[0].point;
+                        Vector3d pts_imu = ric[0] * (node.estimated_depth * pt0.normalized()) + tic[0];
+                        Vector3d pts_w   = Rs[anchor] * pts_imu + Ps[anchor];
+                        obs.x = pts_w.x(); obs.y = pts_w.y(); obs.z = pts_w.z();
+                    }
+                    else if (!node.tree_per_frame.empty())
+                    {
+                        // No depth estimate yet: project latest observation into world.
+                        const TreePerFrame &latest = node.tree_per_frame.back();
+                        Vector3d pts_imu = ric[0] * latest.point + tic[0];
+                        Vector3d pts_w   = Rs[latest.frame] * pts_imu + Ps[latest.frame];
+                        obs.x = pts_w.x(); obs.y = pts_w.y(); obs.z = pts_w.z();
+                    }
+
+                    boost::add_vertex(obs, obs_tree);
+                }
+
+                // Mirror edges from the ModelTree.
+                auto [ei, ei_end] = boost::edges(model_tree);
+                for (; ei != ei_end; ++ei)
+                    boost::add_edge(boost::source(*ei, model_tree),
+                                    boost::target(*ei, model_tree), obs_tree);
+
+                last_model_forest.push_back(std::move(obs_tree));
+            }
+        }
+
         // prepare output of VINS
         key_poses.clear(); // clear all the keypose
         for (int i = 0; i <= WINDOW_SIZE; i++) // for all the element in the window
-        {   
+        {
             try{
                 key_poses.push_back(Ps[i]); // add the new pose in the keypose buffer
             }
