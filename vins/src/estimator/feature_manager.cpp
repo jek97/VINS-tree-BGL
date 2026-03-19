@@ -1413,7 +1413,7 @@ void FeatureManager::removeOutlier(set<int> &outlierIndex, set<int> &tree_outlie
         }
         t_feature.erase(
             std::remove_if(t_feature.begin(), t_feature.end(),
-                           [](const ModelTree &t){ return boost::num_vertices(t) == 0; }),
+                           [](const ModelTree &t){ return boost::num_vertices(t) < 2; }),
             t_feature.end());
     }
     logMessage(oss.str());
@@ -1751,7 +1751,7 @@ void FeatureManager::removeFront(int frame_count)
         }
         t_feature.erase(
             std::remove_if(t_feature.begin(), t_feature.end(),
-                           [](const ModelTree &t){ return boost::num_vertices(t) == 0; }),
+                           [](const ModelTree &t){ return boost::num_vertices(t) < 2; }),
             t_feature.end());
     }
     ///// LOG /////
