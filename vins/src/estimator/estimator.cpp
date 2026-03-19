@@ -293,7 +293,8 @@ void Estimator::inputForest(double t, std::pair<bool, ObservedForest> &forest)
         featureTracker.last_tic = tic[0];
         t_featureFrame.second = featureTracker.trackForest(t, forest.second);
         auto [joinedImage, cam_info, match_time] = featureTracker.getTreeMatch();
-        pubTreeMatchImage(joinedImage, cam_info, match_time);
+        if (!joinedImage.empty())
+            pubTreeMatchImage(joinedImage, cam_info, match_time);
     }
     else
     {

@@ -1322,6 +1322,26 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
 
         match_img = std::make_tuple(match_img_, ref_frame["tree_camera"], _cur_time);
     }
+    else
+    {
+        // No model forest yet — draw cur_forest so match_img is always valid.
+        Eigen::Matrix3d R_lcam_tree = T_lcam_tree.block<3, 3>(0, 0);
+        Eigen::Vector3d P_lcam_tree = T_lcam_tree.block<3, 1>(0, 3);
+        Eigen::Matrix3d R_tree_lcam = R_lcam_tree.transpose();
+        Eigen::Vector3d P_tree_lcam = - R_tree_lcam * P_lcam_tree;
+        Eigen::MatrixXd T_prov = Eigen::MatrixXd(3, 4);
+        T_prov << R_tree_lcam, P_tree_lcam;
+        Eigen::RowVector4d rowVec(0, 0, 0, 1);
+        Eigen::Matrix4d T_tree_lcam;
+        T_tree_lcam << T_prov, rowVec;
+
+        vector<cv::Scalar> colors;
+        for (size_t i = 0; i < cur_forest.size(); ++i)
+            colors.push_back(cv::Scalar(255, 0, 0)); // blue = current nodes
+
+        cv::Mat match_img_ = drawForest(cur_forest, T_tree_lcam, colors, colors);
+        match_img = std::make_tuple(match_img_, ref_frame["tree_camera"], _cur_time);
+    }
 
     // assign new IDs to any node not matched this frame
     for (ObservedTree& tree : cur_forest)
