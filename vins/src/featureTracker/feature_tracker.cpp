@@ -1258,7 +1258,7 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
         oss << "Total: " << n_match << " filtered " << n_f_match << std::endl;
         logMessage(oss.str());
 
-        // visualize the results — draw last_model_forest nodes projected to camera frame
+        // visualize: draw cur_forest and arrows to matched model nodes
         Eigen::Matrix3d R_lcam_tree = T_lcam_tree.block<3, 3>(0, 0);
         Eigen::Vector3d P_lcam_tree = T_lcam_tree.block<3, 1>(0, 3);
         Eigen::Matrix3d R_tree_lcam = R_lcam_tree.transpose();
@@ -1269,37 +1269,27 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
         Eigen::Matrix4d T_tree_lcam;
         T_tree_lcam << T_prov, rowVec;
 
-        // Build a camera-frame copy of last_model_forest only for visualization
-        ObservedForest vis_forest;
-        for (const ObservedTree& mt : last_model_forest)
+        vector<cv::Scalar> cur_circle_colors;
+        vector<cv::Scalar> cur_line_colors;
+        for (size_t i = 0; i < cur_forest.size(); ++i)
         {
-            ObservedTree vt;
-            for (int v = 0; v < (int)boost::num_vertices(mt); ++v)
-            {
-                ObservedNode obs = mt[v];
-                Eigen::Vector3d pts_cam = last_ric.transpose() * (last_R.transpose() * (Eigen::Vector3d(obs.x, obs.y, obs.z) - last_P) - last_tic);
-                obs.x = pts_cam.x(); obs.y = pts_cam.y(); obs.z = pts_cam.z();
-                boost::add_vertex(obs, vt);
-            }
-            auto [ei, ei_end] = boost::edges(mt);
-            for (; ei != ei_end; ++ei)
-                boost::add_edge(boost::source(*ei, mt), boost::target(*ei, mt), vt);
-            vis_forest.push_back(std::move(vt));
+            cur_circle_colors.push_back(genRandomColor());
+            cur_line_colors.push_back(genRandomColor());
         }
 
-        vector<cv::Scalar> match_circle_colors;
-        vector<cv::Scalar> match_line_colors;
-        for(size_t i = 0; i < vis_forest.size(); ++i)
-        {
-            match_circle_colors.push_back(genRandomColor());
-            match_line_colors.push_back(genRandomColor());
-        }
+        cv::Mat match_img_ = drawForest(cur_forest, T_tree_lcam, cur_circle_colors, cur_line_colors);
 
-        cv::Mat match_img_ = drawForest(vis_forest, T_tree_lcam, match_circle_colors, match_line_colors);
-
+        // project tree-sensor-frame point to pixel
         auto project = [&](double x, double y, double z) -> cv::Point {
             Eigen::Vector3d p3d = (T_tree_lcam * Eigen::Vector4d(x, y, z, 1)).head<3>();
             Eigen::Vector3d uvs = K_mat * p3d;
+            return cv::Point(static_cast<int>(uvs[0] / uvs[2]), static_cast<int>(uvs[1] / uvs[2]));
+        };
+
+        // project world-frame point to pixel
+        auto project_world = [&](double x, double y, double z) -> cv::Point {
+            Eigen::Vector3d pts_cam = last_ric.transpose() * (last_R.transpose() * (Eigen::Vector3d(x, y, z) - last_P) - last_tic);
+            Eigen::Vector3d uvs = K_mat * pts_cam;
             return cv::Point(static_cast<int>(uvs[0] / uvs[2]), static_cast<int>(uvs[1] / uvs[2]));
         };
 
@@ -1307,7 +1297,6 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
         {
             if (filtered_matches[i].first != -1)
             {
-                const ObservedTree& vis_tree = vis_forest[filtered_matches[i].first];
                 const ObservedTree& model_tree = last_model_forest[filtered_matches[i].first];
                 for (const auto& match : filtered_matches[i].second)
                 {
@@ -1316,7 +1305,7 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
                     if (model_vd < 0 || cur_vd < 0) continue;
 
                     cv::arrowedLine(match_img_,
-                        project(vis_tree[model_vd].x, vis_tree[model_vd].y, vis_tree[model_vd].z),
+                        project_world(model_tree[model_vd].x, model_tree[model_vd].y, model_tree[model_vd].z),
                         project(cur_forest[i][cur_vd].x, cur_forest[i][cur_vd].y, cur_forest[i][cur_vd].z),
                         cv::Scalar(0, 255, 0), 1, 8, 0, 0.2);
                 }
