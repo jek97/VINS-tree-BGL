@@ -1107,7 +1107,7 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
             f_manager.initFramePoseByPnP(frame_count, Ps, Rs, tic, ric);
             f_manager.triangulate(frame_count, Ps, Rs, tic, ric);
             optimization();
-
+            
             if(frame_count == WINDOW_SIZE)
             {
                 optimization();
@@ -1116,6 +1116,10 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
                 slideWindow();
                 rebuildLastModelForest();
                 ROS_INFO("Initialization finish!");
+            }
+            else
+            {
+                rebuildLastModelForest();
             }
         }
 
