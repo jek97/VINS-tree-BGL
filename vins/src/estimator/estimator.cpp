@@ -292,23 +292,6 @@ void Estimator::inputForest(double t, std::pair<bool, ObservedForest> &forest)
         featureTracker.last_ric = ric[0];
         featureTracker.last_tic = tic[0];
         t_featureFrame.second = featureTracker.trackForest(t, forest.second);
-        {
-            std::ostringstream oss;
-            oss << "=========================================================================\nTrackforest result at time " << std::setprecision(15) << t << "\n";
-            oss << "trees=" << t_featureFrame.second.second.size() << "\n";
-            for (const auto& [tree_idx, tree] : t_featureFrame.second.second)
-            {
-                oss << "  tree_idx=" << tree_idx << "  nodes=" << boost::num_vertices(tree) << "\n";
-                auto [vbegin, vend] = boost::vertices(tree);
-                for (auto vd = vbegin; vd != vend; ++vd)
-                {
-                    const ObservedNode& n = tree[*vd];
-                    oss << "    node id=" << n.id << " ex_id=" << n.ex_id
-                        << " pos=(" << n.x << ", " << n.y << ", " << n.z << ")\n";
-                }
-            }
-            logMessage(oss.str());
-        }
         auto [joinedImage, cam_info, match_time] = featureTracker.getTreeMatch();
         pubTreeMatchImage(joinedImage, cam_info, match_time);
     }
@@ -1281,6 +1264,20 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
 
                 last_model_forest.push_back(std::move(obs_tree));
             }
+            std::ostringstream oss_lmf;
+            oss_lmf << "=========================================================================\nlast_model_forest formation result  trees=" << last_model_forest.size() << "\n";
+            for (size_t ti = 0; ti < last_model_forest.size(); ++ti)
+            {
+                const ObservedTree& t = last_model_forest[ti];
+                oss_lmf << "  tree " << ti << "  nodes=" << boost::num_vertices(t) << "\n";
+                auto [vb, ve] = boost::vertices(t);
+                for (auto vd = vb; vd != ve; ++vd)
+                {
+                    const ObservedNode& n = t[*vd];
+                    oss_lmf << "    node id=" << n.id << " pos=(" << n.x << ", " << n.y << ", " << n.z << ")\n";
+                }
+            }
+            logMessage(oss_lmf.str());
         }
 
         // prepare output of VINS
