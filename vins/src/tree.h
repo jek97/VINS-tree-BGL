@@ -26,6 +26,7 @@ struct ObservedNode
     double v_x = 0.0;
     double v_y = 0.0;
     double v_z = 0.0;
+    double timestamp = 0.0;    // time of the frame this node was last observed/anchored
     std::vector<double>   fd;
     std::vector<uint8_t>  fd_brief;
     int component = -1;

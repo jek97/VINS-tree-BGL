@@ -283,6 +283,14 @@ void Estimator::inputForest(double t, std::pair<bool, ObservedForest> &forest)
     if(forest.first) // if we received a valid forest
     {
         t_featureFrame.first = true;
+        {
+            std::scoped_lock lk(Mlmodel, featureTracker.Mlmodel);
+            featureTracker.last_model_forest = last_model_forest;
+        }
+        featureTracker.last_R   = Rs[WINDOW_SIZE];
+        featureTracker.last_P   = Ps[WINDOW_SIZE];
+        featureTracker.last_ric = ric[0];
+        featureTracker.last_tic = tic[0];
         t_featureFrame.second = featureTracker.trackForest(t, forest.second);
         auto [joinedImage, cam_info, match_time] = featureTracker.getTreeMatch();
         pubTreeMatchImage(joinedImage, cam_info, match_time);
@@ -862,7 +870,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         f_manager.removeOutlier(removeIndex, empty_set); // remove the outlier from the features
         if (! MULTIPLE_THREAD) // in case of single thred
         {
-            featureTracker.removeOutliers(removeIndex, empty_set); // use a different function removing the points from different lists
+            featureTracker.removeOutliers(removeIndex);
             predictPtsInNextFrame(); // predict the points in the next frame and add them to the predicted point for their matching with the next frame features
         }
             
@@ -1081,7 +1089,7 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
         f_manager.removeOutlier(removeIndex, remove_tree_Index); // remove the outlier from the features 
         if (! MULTIPLE_THREAD) // in case of single thred
         {
-            featureTracker.removeOutliers(removeIndex, remove_tree_Index); // use a different function removing the points from different lists TODO FOR TREE (check the result and decide)
+            featureTracker.removeOutliers(removeIndex);
             predictPtsInNextFrame(); // predict the points in the next frame and add them to the predicted point for their matching with the next frame features TODO FOR TREE
         }
                 
@@ -1233,6 +1241,7 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
                         Vector3d pts_imu = ric[0] * (node.estimated_depth * pt0.normalized()) + tic[0];
                         Vector3d pts_w   = Rs[anchor] * pts_imu + Ps[anchor];
                         obs.x = pts_w.x(); obs.y = pts_w.y(); obs.z = pts_w.z();
+                        obs.timestamp = Headers[anchor];
                     }
                     else if (!node.tree_per_frame.empty())
                     {
@@ -1241,6 +1250,7 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
                         Vector3d pts_imu = ric[0] * latest.point + tic[0];
                         Vector3d pts_w   = Rs[latest.frame] * pts_imu + Ps[latest.frame];
                         obs.x = pts_w.x(); obs.y = pts_w.y(); obs.z = pts_w.z();
+                        obs.timestamp = Headers[latest.frame];
                     }
 
                     boost::add_vertex(obs, obs_tree);
@@ -2907,30 +2917,6 @@ void Estimator::predictPtsInNextFrame()
     }
     featureTracker.setPrediction(predictPts); // set the prediction in the feature tracker, where it will be used
     //printf("estimator output %d predict pts\n",(int)predictPts.size());
-    if (USE_TREE) 
-    {   
-        map<int, Eigen::Vector3d> predict_t_Pts;
-        for (auto &_mt : f_manager.t_feature)
-        for (int _v = 0; _v < (int)boost::num_vertices(_mt); ++_v)
-        {
-            auto &it_per_id = _mt[_v];
-            if (it_per_id.estimated_depth > 0)
-            {
-                int firstIndex = it_per_id.start_frame;
-                int lastIndex = it_per_id.endFrame();
-                if ((int)it_per_id.tree_per_frame.size() >= 2 && lastIndex == frame_count)
-                {
-                    double depth = it_per_id.estimated_depth;
-                    Vector3d pts_j   = ric[0] * (depth * it_per_id.tree_per_frame[0].point) + tic[0];
-                    Vector3d pts_w   = Rs[firstIndex] * pts_j + Ps[firstIndex];
-                    Vector3d pts_local = nextT.block<3,3>(0,0).transpose() * (pts_w - nextT.block<3,1>(0,3));
-                    Vector3d pts_cam   = ric[0].transpose() * (pts_local - tic[0]);
-                    predict_t_Pts[it_per_id.feature_id] = pts_cam;
-                }
-            }
-        }
-        featureTracker.set_tree_Prediction(predict_t_Pts); // set the prediction in the feature tracker, where it will be used
-    }
 }
 
 double Estimator::reprojectionError(Matrix3d &Ri, Vector3d &Pi, Matrix3d &rici, Vector3d &tici,

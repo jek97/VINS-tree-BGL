@@ -143,10 +143,36 @@ struct ModelNode
 };
 
 using ModelTree   = boost::adjacency_list<
-    boost::vecS, boost::vecS, boost::directedS,
+    boost::vecS, boost::vecS, boost::bidirectionalS,
     ModelNode, boost::no_property
 >;
 using ModelForest = std::vector<ModelTree>;
+
+// Remove vertex v from a tree (ModelTree or ObservedTree) by first bridging
+// its direct parent to each of its direct children, then calling remove_vertex.
+// This "bypass" preserves reachability of all descendants.  Any removal order
+// is correct because each call operates on the live, already-updated graph.
+template <typename Tree>
+void node_bypass(Tree &tree, int v)
+{
+    int parent = -1;
+    {
+        auto [iei, iei_end] = boost::in_edges(v, tree);
+        if (iei != iei_end)
+            parent = (int)boost::source(*iei, tree);
+    }
+    if (parent != -1)
+    {
+        // Snapshot children before add_edge can invalidate iterators.
+        std::vector<int> children;
+        auto [oei, oei_end] = boost::out_edges(v, tree);
+        for (; oei != oei_end; ++oei)
+            children.push_back((int)boost::target(*oei, tree));
+        for (int c : children)
+            boost::add_edge(parent, c, tree);
+    }
+    boost::remove_vertex(v, tree);
+}
 
 class FeatureManager
 {

@@ -475,21 +475,27 @@ void FeatureManager::removeFailures()
     {
         for (auto &model_tree : t_feature)
         {
-            // collect vertices to remove (in reverse order to keep indices stable)
-            vector<int> to_remove;
+            // Collect failed vertices, highest index first.
+            // Processing highest-first keeps all lower indices stable after
+            // each remove_vertex call, so no index adjustment is needed.
+            std::vector<int> to_remove;
             for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
                 if (model_tree[v].solve_flag == 2)
                     to_remove.push_back(v);
-            for (int i = (int)to_remove.size() - 1; i >= 0; --i)
+            std::sort(to_remove.rbegin(), to_remove.rend());
+
+            for (int v : to_remove)
             {
-                boost::remove_vertex(to_remove[i], model_tree);
+                node_bypass(model_tree, v);
                 tree_features_removed++;
+                // BGL shifts all indices > v down by 1; remaining to_remove
+                // entries are all < v, so no adjustment is needed.
             }
         }
-        // remove trees that became empty
+        // Remove trees that became too small to be useful (< 2 nodes).
         t_feature.erase(
             std::remove_if(t_feature.begin(), t_feature.end(),
-                           [](const ModelTree &t){ return boost::num_vertices(t) == 0; }),
+                           [](const ModelTree &t){ return boost::num_vertices(t) < 2; }),
             t_feature.end());
     }
     ///// LOG /////
@@ -1361,8 +1367,7 @@ void FeatureManager::triangulate(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vec
                 ModelNode &node = model_tree[v];
                 if (node.estimated_depth > 0)
                     continue;
-                node.used_num = node.tree_per_frame.size();
-                if (node.used_num < 3)
+                if (node.tree_per_frame.empty())
                     continue;
                 double depth = node.tree_per_frame[0].point.norm();
                 node.estimated_depth = (depth > 0) ? depth : INIT_DEPTH;
@@ -1397,17 +1402,19 @@ void FeatureManager::removeOutlier(set<int> &outlierIndex, set<int> &tree_outlie
         {
             vector<int> to_remove;
             for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
+            {
                 if (tree_outlierIndex.count(model_tree[v].feature_id))
                 {
                     oss << "    removing " << model_tree[v].feature_id << std::endl;
                     to_remove.push_back(v);
                 }
+            }
             for (int i = (int)to_remove.size() - 1; i >= 0; --i)
-                boost::remove_vertex(to_remove[i], model_tree);
+                node_bypass(model_tree, to_remove[i]);
         }
         t_feature.erase(
             std::remove_if(t_feature.begin(), t_feature.end(),
-                           [](const ModelTree &t){ return boost::num_vertices(t) == 0; }),
+                           [](const ModelTree &t){ return boost::num_vertices(t) < 2; }),
             t_feature.end());
     }
     logMessage(oss.str());
@@ -1497,7 +1504,7 @@ void FeatureManager::removeBackShiftDepth(Eigen::Matrix3d marg_R, Eigen::Vector3
                     node.tree_per_frame.erase(node.tree_per_frame.begin());
                     for (auto &fpf : node.tree_per_frame) fpf.frame--;
 
-                    if (node.tree_per_frame.size() < 2)
+                    if ((int)node.tree_per_frame.size() < 2)
                     {
                         to_remove.push_back(v);
                         tree_features_removed++;
@@ -1514,11 +1521,11 @@ void FeatureManager::removeBackShiftDepth(Eigen::Matrix3d marg_R, Eigen::Vector3
                 }
             }
             for (int i = (int)to_remove.size() - 1; i >= 0; --i)
-                boost::remove_vertex(to_remove[i], model_tree);
+                node_bypass(model_tree, to_remove[i]);
         }
         t_feature.erase(
             std::remove_if(t_feature.begin(), t_feature.end(),
-                           [](const ModelTree &t){ return boost::num_vertices(t) == 0; }),
+                           [](const ModelTree &t){ return boost::num_vertices(t) < 2; }),
             t_feature.end());
     }
 
@@ -1608,7 +1615,7 @@ void FeatureManager::removeBack()
                 {
                     node.tree_per_frame.erase(node.tree_per_frame.begin());
                     for (auto &fpf : node.tree_per_frame) fpf.frame--;
-                    if (node.tree_per_frame.empty())
+                    if ((int)node.tree_per_frame.size() < 2)
                     {
                         to_remove.push_back(v);
                         tree_features_removed++;
@@ -1618,11 +1625,11 @@ void FeatureManager::removeBack()
                 }
             }
             for (int i = (int)to_remove.size() - 1; i >= 0; --i)
-                boost::remove_vertex(to_remove[i], model_tree);
+                node_bypass(model_tree, to_remove[i]);
         }
         t_feature.erase(
             std::remove_if(t_feature.begin(), t_feature.end(),
-                           [](const ModelTree &t){ return boost::num_vertices(t) == 0; }),
+                           [](const ModelTree &t){ return boost::num_vertices(t) < 2; }),
             t_feature.end());
     }
 
@@ -1741,11 +1748,11 @@ void FeatureManager::removeFront(int frame_count)
                 }
             }
             for (int i = (int)to_remove.size() - 1; i >= 0; --i)
-                boost::remove_vertex(to_remove[i], model_tree);
+                node_bypass(model_tree, to_remove[i]);
         }
         t_feature.erase(
             std::remove_if(t_feature.begin(), t_feature.end(),
-                           [](const ModelTree &t){ return boost::num_vertices(t) == 0; }),
+                           [](const ModelTree &t){ return boost::num_vertices(t) < 2; }),
             t_feature.end());
     }
     ///// LOG /////
