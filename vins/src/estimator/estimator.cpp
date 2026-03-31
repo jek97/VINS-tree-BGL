@@ -292,6 +292,23 @@ void Estimator::inputForest(double t, std::pair<bool, ObservedForest> &forest)
         featureTracker.last_ric = ric[0];
         featureTracker.last_tic = tic[0];
         t_featureFrame.second = featureTracker.trackForest(t, forest.second);
+        {
+            std::ostringstream oss;
+            oss << "=========================================================================\nTrackforest result at time " << std::setprecision(15) << t << "\n";
+            oss << "trees=" << t_featureFrame.second.second.size() << "\n";
+            for (const auto& [tree_idx, tree] : t_featureFrame.second.second)
+            {
+                oss << "  tree_idx=" << tree_idx << "  nodes=" << boost::num_vertices(tree) << "\n";
+                auto [vbegin, vend] = boost::vertices(tree);
+                for (auto vd = vbegin; vd != vend; ++vd)
+                {
+                    const ObservedNode& n = tree[*vd];
+                    oss << "    node id=" << n.id << " ex_id=" << n.ex_id
+                        << " pos=(" << n.x << ", " << n.y << ", " << n.z << ")\n";
+                }
+            }
+            logMessage(oss.str());
+        }
         auto [joinedImage, cam_info, match_time] = featureTracker.getTreeMatch();
         pubTreeMatchImage(joinedImage, cam_info, match_time);
     }
