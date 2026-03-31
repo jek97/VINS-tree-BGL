@@ -128,40 +128,54 @@ bool FeatureManager::addFeatureTreeCheckParallax(int frame_count, const double h
         }
     }
 
-    // NOTE: prev_idx != -1 (matched tree) is treated the same as -1 (new tree) until
-    // the model-forest update pipeline is implemented further downstream.
-    int last_t_track_num = 0; // always 0 until matched-tree update is implemented
-    int new_t_feature_num = 0;
-    int long_t_track_num = 0; // always 0 until multi-frame tracking is implemented
+    // --- Tree features ---
+    int last_t_track_num   = 0;
+    int new_t_feature_num  = 0;
+    int long_t_track_num   = 0;
     for (const auto &[prev_idx, obs_tree] : tree.second)
     {
-        ModelTree model_tree;
-
-        // copy vertices: convert each ObservedNode to a ModelNode with its first TreePerFrame
-        // vertex descriptors are positional (vecS), so we add them in order 0..N-1
-        for (int v = 0; v < (int)boost::num_vertices(obs_tree); ++v)
+        if (prev_idx == -1)
         {
-            const ObservedNode &obs_node = obs_tree[v];
-            ModelNode model_node(obs_node.id, frame_count);
-            model_node.tree_per_frame.emplace_back(obs_node, td, frame_count);
-            boost::add_vertex(model_node, model_tree);
-            new_t_feature_num++;
+            // Unmatched tree: add as a brand-new ModelTree to t_feature.
+            ModelTree model_tree;
+
+            // Add vertices: one ModelNode per ObservedNode, preserving all fields.
+            for (int v = 0; v < (int)boost::num_vertices(obs_tree); ++v)
+            {
+                const ObservedNode &obs_node = obs_tree[v];
+
+                ModelNode model_node(obs_node.id, frame_count);
+                model_node.used_num        = 0;
+                model_node.estimated_depth = -1.0;
+                model_node.solve_flag      = 0;
+                model_node.tree_per_frame.emplace_back(obs_node, td, frame_count);
+
+                boost::add_vertex(model_node, model_tree);
+                new_t_feature_num++;
+            }
+
+            // Mirror edges from the ObservedTree, preserving parent-son relations.
+            auto [ei, ei_end] = boost::edges(obs_tree);
+            for (; ei != ei_end; ++ei)
+                boost::add_edge(boost::source(*ei, obs_tree),
+                                boost::target(*ei, obs_tree), model_tree);
+
+            t_feature.push_back(std::move(model_tree));
         }
-
-        // copy edges, preserving the tree structure
-        auto [ei, ei_end] = boost::edges(obs_tree);
-        for (; ei != ei_end; ++ei)
-            boost::add_edge(boost::source(*ei, obs_tree), boost::target(*ei, obs_tree), model_tree);
-
-        t_feature.push_back(std::move(model_tree));
+        else
+        {
+            // Matched tree: update the existing ModelTree at t_feature[prev_idx].
+            // TODO: add the new TreePerFrame observations to matched nodes and
+            //       extend the graph with any newly appeared nodes.
+            last_t_track_num++;
+        }
     }
 
     ///// LOG /////
     std::ostringstream oss1;
     oss1 << "=========================================================================\nFM buffer update at frame_count=" << frame_count
          << "\nnormal: new=" << new_feature_num << " tracked=" << last_track_num << " long=" << long_track_num
-         << "\ntree:   new_nodes=" << new_t_feature_num
-         << " (matched-tree update pending)"
+         << "\ntree:   new_nodes=" << new_t_feature_num << " matched_trees=" << last_t_track_num
          << std::endl;
     oss << "tree: new_nodes=" << new_t_feature_num << std::endl;
     logMessage(oss.str());
