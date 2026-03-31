@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <vector>
 #include <numeric>
+#include <unordered_map>
 #include "../tree.h"
 #include <boost/graph/adjacency_list.hpp>
 using namespace std;

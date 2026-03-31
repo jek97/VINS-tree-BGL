@@ -164,9 +164,98 @@ bool FeatureManager::addFeatureTreeCheckParallax(int frame_count, const double h
         }
         else
         {
-            // Matched tree: update the existing ModelTree at t_feature[prev_idx].
-            // TODO: add the new TreePerFrame observations to matched nodes and
-            //       extend the graph with any newly appeared nodes.
+            // Matched tree: analyse topological consistency between the current
+            // observed tree and the existing ModelTree at t_feature[prev_idx].
+            ModelTree &model_tree = t_feature[prev_idx];
+
+            // --- helpers ---
+
+            // All obs nodes that are tracked (track_cnt > 1): id -> vd in obs_tree.
+            unordered_map<int, int> matched_obs; // id -> obs vd
+            for (int v = 0; v < (int)boost::num_vertices(obs_tree); ++v)
+                if (obs_tree[v].track_cnt > 1 && obs_tree[v].id >= 0)
+                    matched_obs[obs_tree[v].id] = v;
+
+            // Find vd in model_tree by feature_id.
+            auto find_model_vd = [&](int id) -> int {
+                for (int v = 0; v < (int)boost::num_vertices(model_tree); ++v)
+                    if (model_tree[v].feature_id == id) return v;
+                return -1;
+            };
+
+            // Walk toward root in obs_tree from start_vd.
+            // Returns {path, cb_vd} where path = [start_vd ... cb_vd] and
+            // cb_vd is the first ancestor with track_cnt > 1 (-1 if root reached first).
+            auto walk_obs = [&](int start_vd) -> pair<vector<int>, int> {
+                vector<int> path = {start_vd};
+                int curr = start_vd;
+                while (true) {
+                    auto [ie, ie_end] = boost::in_edges(curr, obs_tree);
+                    if (ie == ie_end) return {path, -1};          // reached root
+                    curr = (int)boost::source(*ie, obs_tree);
+                    path.push_back(curr);
+                    if (obs_tree[curr].track_cnt > 1) return {path, curr}; // found CB
+                }
+            };
+
+            // Walk toward root in model_tree from start_vd.
+            // A model node is "matched" if its feature_id is in matched_obs.
+            // Returns {path, mb_vd} where mb_vd = -1 if root reached first.
+            auto walk_model = [&](int start_vd) -> pair<vector<int>, int> {
+                vector<int> path = {start_vd};
+                int curr = start_vd;
+                while (true) {
+                    auto [ie, ie_end] = boost::in_edges(curr, model_tree);
+                    if (ie == ie_end) return {path, -1};          // reached root
+                    curr = (int)boost::source(*ie, model_tree);
+                    path.push_back(curr);
+                    if (matched_obs.count(model_tree[curr].feature_id)) return {path, curr}; // found MB
+                }
+            };
+
+            // --- topological consistency analysis ---
+
+            // key   = CB node id
+            // value = list of (path CB→CA in obs, path MB→MA in model)
+            //         where each path is a sequence of vertex descriptors
+            //         ordered from ancestor (CB/MB) down to descendant (CA/MA).
+            unordered_map<int, vector<pair<vector<int>, vector<int>>>> path_map;
+
+            // nodes CA (obs vd) whose parent topology is inconsistent with the model.
+            vector<int> topological_violations;
+
+            for (const auto &[ca_id, ca_vd] : matched_obs)
+            {
+                int ma_vd = find_model_vd(ca_id);
+                if (ma_vd < 0) continue; // model node not found (shouldn't happen)
+
+                auto [path_obs,   cb_vd] = walk_obs  (ca_vd);
+                auto [path_model, mb_vd] = walk_model(ma_vd);
+
+                // If either walk hit the root without finding a matched ancestor
+                // there is nothing to compare: skip.
+                if (cb_vd < 0 || mb_vd < 0) continue;
+
+                int cb_id          = obs_tree[cb_vd].id;
+                int mb_feature_id  = model_tree[mb_vd].feature_id;
+
+                if (cb_id != mb_feature_id)
+                {
+                    // CB and MB are different nodes: topological violation.
+                    topological_violations.push_back(ca_vd);
+                }
+                else
+                {
+                    // CB and MB are the same tracked node: consistent ancestry.
+                    // Store path CB→CA (reverse of obs walk) and MB→MA (reverse of model walk).
+                    vector<int> path_cb_to_ca(path_obs.rbegin(),   path_obs.rend());
+                    vector<int> path_mb_to_ma(path_model.rbegin(), path_model.rend());
+                    path_map[cb_id].emplace_back(std::move(path_cb_to_ca),
+                                                 std::move(path_mb_to_ma));
+                }
+            }
+
+            // TODO: use path_map and topological_violations to update model_tree.
             last_t_track_num++;
         }
     }
