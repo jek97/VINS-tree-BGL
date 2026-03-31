@@ -760,7 +760,8 @@ pair<vector<vector<double>>, vector<vector<double>>> FeatureTracker::tree_bipart
             double topological_distance = (cur_topological_fd - prev_topological_fd).norm();
 
             // final distance
-            double custom_dist = (dist_2d * ((prev_depth + cur_depth) / 2)) + topological_distance;
+            // double custom_dist = (dist_2d * ((prev_depth + cur_depth) / 2)) + topological_distance;
+            double custom_dist = (p_0_w - p_1_w).norm() + topological_distance;
             cost_mat[i + 1][nL + 1 + j] = custom_dist;
 
             // capacity: use world-frame 3D distance for position gate
