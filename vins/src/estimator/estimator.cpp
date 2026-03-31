@@ -931,6 +931,64 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
     }  
 }
 
+void Estimator::rebuildLastModelForest()
+{
+    std::lock_guard<std::mutex> lk(Mlmodel);
+    last_model_forest.clear();
+    for (const auto &model_tree : f_manager.t_feature)
+    {
+        ObservedTree obs_tree;
+        const int nv = (int)boost::num_vertices(model_tree);
+        for (int v = 0; v < nv; ++v)
+        {
+            const ModelNode &node = model_tree[v];
+            ObservedNode obs;
+            obs.id        = node.feature_id;
+            obs.track_cnt = (int)node.tree_per_frame.size();
+
+            if (node.estimated_depth > 0 && !node.tree_per_frame.empty())
+            {
+                int anchor = node.start_frame;
+                const Vector3d &pt0 = node.tree_per_frame[0].point;
+                Vector3d pts_imu = ric[0] * (node.estimated_depth * pt0.normalized()) + tic[0];
+                Vector3d pts_w   = Rs[anchor] * pts_imu + Ps[anchor];
+                obs.x = pts_w.x(); obs.y = pts_w.y(); obs.z = pts_w.z();
+                obs.timestamp = Headers[anchor];
+            }
+            else if (!node.tree_per_frame.empty())
+            {
+                const TreePerFrame &latest = node.tree_per_frame.back();
+                Vector3d pts_imu = ric[0] * latest.point + tic[0];
+                Vector3d pts_w   = Rs[latest.frame] * pts_imu + Ps[latest.frame];
+                obs.x = pts_w.x(); obs.y = pts_w.y(); obs.z = pts_w.z();
+                obs.timestamp = Headers[latest.frame];
+            }
+
+            boost::add_vertex(obs, obs_tree);
+        }
+        auto [ei, ei_end] = boost::edges(model_tree);
+        for (; ei != ei_end; ++ei)
+            boost::add_edge(boost::source(*ei, model_tree),
+                            boost::target(*ei, model_tree), obs_tree);
+        last_model_forest.push_back(std::move(obs_tree));
+    }
+
+    std::ostringstream oss_lmf;
+    oss_lmf << "=========================================================================\nlast_model_forest formation result  trees=" << last_model_forest.size() << "\n";
+    for (size_t ti = 0; ti < last_model_forest.size(); ++ti)
+    {
+        const ObservedTree& t = last_model_forest[ti];
+        oss_lmf << "  tree " << ti << "  nodes=" << boost::num_vertices(t) << "\n";
+        auto [vb, ve] = boost::vertices(t);
+        for (auto vd = vb; vd != ve; ++vd)
+        {
+            const ObservedNode& n = t[*vd];
+            oss_lmf << "    node id=" << n.id << " pos=(" << n.x << ", " << n.y << ", " << n.z << ")\n";
+        }
+    }
+    logMessage(oss_lmf.str());
+}
+
 void Estimator::processImage_tree(const double header, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const pair<double, vector<pair<int, ObservedTree>>> &tree)
 {   
          
@@ -990,10 +1048,10 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
             if (frame_count == WINDOW_SIZE) //if the frame count (that start from 0) is as big as the WINDOW_SIZE (this means that probably we got there after a clear_state call)
             {
                 bool result = false;
-                if(ESTIMATE_EXTRINSIC != 2 && (header - initial_timestamp) > 0.1) // if we have the extrinsic parameters and the message we received is at least 0.1 sec farther from the last clear state  
+                if(ESTIMATE_EXTRINSIC != 2 && (header - initial_timestamp) > 0.1) // if we have the extrinsic parameters and the message we received is at least 0.1 sec farther from the last clear state
                 {
                     result = initialStructure();
-                    initial_timestamp = header;   
+                    initial_timestamp = header;
                 }
                 if(result)
                 {
@@ -1001,10 +1059,14 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
                     updateLatestStates();
                     solver_flag = NON_LINEAR;
                     slideWindow();
+                    rebuildLastModelForest();
                     ROS_INFO("Initialization finish!");
                 }
                 else
+                {
                     slideWindow();
+                    rebuildLastModelForest();
+                }
             }
         }
 
@@ -1013,8 +1075,8 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
         {
             f_manager.initFramePoseByPnP(frame_count, Ps, Rs, tic, ric);
             f_manager.triangulate(frame_count, Ps, Rs, tic, ric);
-            
-            
+
+
             if (frame_count == WINDOW_SIZE)
             {
                 map<double, ImageFrame>::iterator frame_it;
@@ -1034,6 +1096,7 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
                 updateLatestStates();
                 solver_flag = NON_LINEAR;
                 slideWindow();
+                rebuildLastModelForest();
                 ROS_INFO("Initialization finish!");
             }
         }
@@ -1051,6 +1114,7 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
                 updateLatestStates();
                 solver_flag = NON_LINEAR;
                 slideWindow();
+                rebuildLastModelForest();
                 ROS_INFO("Initialization finish!");
             }
         }
@@ -1216,69 +1280,7 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
         slideWindow(); // slide all the quantities in the window
         f_manager.removeFailures(); // delete features for which wasn't possible to do the optimization?
 
-        // Rebuild last_model_forest: world-frame ObservedForest summarising t_feature.
-        // Done here — after all removals — so estimated_depth and poses are final.
-        {
-            std::lock_guard<std::mutex> lk(Mlmodel);
-            last_model_forest.clear();
-            for (const auto &model_tree : f_manager.t_feature)
-            {
-                ObservedTree obs_tree;
-                const int nv = (int)boost::num_vertices(model_tree);
-
-                for (int v = 0; v < nv; ++v)
-                {
-                    const ModelNode &node = model_tree[v];
-                    ObservedNode obs;
-                    obs.id        = node.feature_id;
-                    obs.track_cnt = (int)node.tree_per_frame.size();
-
-                    if (node.estimated_depth > 0 && !node.tree_per_frame.empty())
-                    {
-                        // Anchor-point projection: depth along first observation ray.
-                        int anchor = node.start_frame;
-                        const Vector3d &pt0 = node.tree_per_frame[0].point;
-                        Vector3d pts_imu = ric[0] * (node.estimated_depth * pt0.normalized()) + tic[0];
-                        Vector3d pts_w   = Rs[anchor] * pts_imu + Ps[anchor];
-                        obs.x = pts_w.x(); obs.y = pts_w.y(); obs.z = pts_w.z();
-                        obs.timestamp = Headers[anchor];
-                    }
-                    else if (!node.tree_per_frame.empty())
-                    {
-                        // No depth estimate yet: project latest observation into world.
-                        const TreePerFrame &latest = node.tree_per_frame.back();
-                        Vector3d pts_imu = ric[0] * latest.point + tic[0];
-                        Vector3d pts_w   = Rs[latest.frame] * pts_imu + Ps[latest.frame];
-                        obs.x = pts_w.x(); obs.y = pts_w.y(); obs.z = pts_w.z();
-                        obs.timestamp = Headers[latest.frame];
-                    }
-
-                    boost::add_vertex(obs, obs_tree);
-                }
-
-                // Mirror edges from the ModelTree.
-                auto [ei, ei_end] = boost::edges(model_tree);
-                for (; ei != ei_end; ++ei)
-                    boost::add_edge(boost::source(*ei, model_tree),
-                                    boost::target(*ei, model_tree), obs_tree);
-
-                last_model_forest.push_back(std::move(obs_tree));
-            }
-            std::ostringstream oss_lmf;
-            oss_lmf << "=========================================================================\nlast_model_forest formation result  trees=" << last_model_forest.size() << "\n";
-            for (size_t ti = 0; ti < last_model_forest.size(); ++ti)
-            {
-                const ObservedTree& t = last_model_forest[ti];
-                oss_lmf << "  tree " << ti << "  nodes=" << boost::num_vertices(t) << "\n";
-                auto [vb, ve] = boost::vertices(t);
-                for (auto vd = vb; vd != ve; ++vd)
-                {
-                    const ObservedNode& n = t[*vd];
-                    oss_lmf << "    node id=" << n.id << " pos=(" << n.x << ", " << n.y << ", " << n.z << ")\n";
-                }
-            }
-            logMessage(oss_lmf.str());
-        }
+        rebuildLastModelForest();
 
         // prepare output of VINS
         key_poses.clear(); // clear all the keypose
