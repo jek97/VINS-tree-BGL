@@ -79,7 +79,7 @@ void FeatureManager::logMessage(const std::string& message)
     logFile << message << std::endl;
 }
 
-bool FeatureManager::addFeatureTreeCheckParallax(int frame_count, const double header, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const pair<double, vector<pair<int, ObservedTree>>> &tree, double td)
+bool FeatureManager::addFeatureTreeCheckParallax(int frame_count, const double header, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const pair<double, vector<pair<int, ObservedTree>>> &tree, double td, const Eigen::Matrix3d* Rs, const Eigen::Vector3d* Ps, const Eigen::Matrix3d& ric0, const Eigen::Vector3d& tic0)
 {
     ///// LOG /////
     std::ostringstream oss;
@@ -255,7 +255,164 @@ bool FeatureManager::addFeatureTreeCheckParallax(int frame_count, const double h
                 }
             }
 
-            // TODO: use path_map and topological_violations to update model_tree.
+            // obs_vd -> model_vd for every obs node that has or gets a model counterpart.
+            // Initialised for matched nodes; extended by Parts 3 and 1.
+            unordered_map<int, int> obs_to_model_vd;
+            for (const auto &[id, obs_vd] : matched_obs) {
+                int mvd = find_model_vd(id);
+                if (mvd >= 0) obs_to_model_vd[obs_vd] = mvd;
+            }
+
+            // Project a model node's last observation to world frame for sorting.
+            auto to_world = [&](const ModelNode &node) -> Eigen::Vector3d {
+                if (node.tree_per_frame.empty()) return Eigen::Vector3d::Zero();
+                const TreePerFrame &tpf = node.tree_per_frame.back();
+                return Rs[tpf.frame] * (ric0 * tpf.point + tic0) + Ps[tpf.frame];
+            };
+
+            // ----------------------------------------------------------------
+            // PART 2 — topological violations: add new observation, keep topology
+            // ----------------------------------------------------------------
+            for (int ca_vd : topological_violations) {
+                int ma_vd = find_model_vd(obs_tree[ca_vd].id);
+                if (ma_vd >= 0)
+                    model_tree[ma_vd].tree_per_frame.emplace_back(obs_tree[ca_vd], td, frame_count);
+            }
+
+            // ----------------------------------------------------------------
+            // PART 3 — path reordering between pairs of matched anchors
+            // ----------------------------------------------------------------
+            // obs_vd of nodes that were Part-3 intermediates (excluded from Part 1).
+            unordered_set<int> path_obs_intermediates;
+
+            for (auto &[cb_id, pairs] : path_map) {
+                int mb_vd = find_model_vd(cb_id);
+                if (mb_vd < 0) continue;
+
+                for (auto &[p_obs, p_model] : pairs) {
+                    // p_obs  = [cb_vd, ..., ca_vd]  (obs_tree vds)
+                    // p_model = [mb_vd, ..., ma_vd]  (model_tree vds)
+                    if (p_obs.size() < 2 || p_model.size() < 2) continue;
+
+                    int cb_vd  = p_obs.front();
+                    int ca_vd  = p_obs.back();
+                    int ma_vd  = p_model.back();
+
+                    // Anchor positions used for distance computation.
+                    Eigen::Vector3d cb_pos(obs_tree[cb_vd].x, obs_tree[cb_vd].y, obs_tree[cb_vd].z);
+                    Eigen::Vector3d mb_world = to_world(model_tree[mb_vd]);
+
+                    struct IntNode {
+                        bool is_model;
+                        int  orig_vd;   // vd in its own tree (obs or model)
+                        int  model_vd;  // resolved model-tree vd (set during insertion)
+                        double dist;
+                    };
+                    vector<IntNode> intermediates;
+
+                    // Collect obs intermediates (indices 1 .. size-2).
+                    for (int k = 1; k < (int)p_obs.size() - 1; ++k) {
+                        int vd = p_obs[k];
+                        path_obs_intermediates.insert(vd);
+                        Eigen::Vector3d pos(obs_tree[vd].x, obs_tree[vd].y, obs_tree[vd].z);
+                        intermediates.push_back({false, vd, -1, (pos - cb_pos).norm()});
+                    }
+
+                    // Collect model intermediates (indices 1 .. size-2).
+                    for (int k = 1; k < (int)p_model.size() - 1; ++k) {
+                        int vd = p_model[k];
+                        Eigen::Vector3d wpos = to_world(model_tree[vd]);
+                        intermediates.push_back({true, vd, vd, (wpos - mb_world).norm()});
+                    }
+
+                    // Sort ascending by distance; model nodes first at ties.
+                    stable_sort(intermediates.begin(), intermediates.end(),
+                        [](const IntNode &a, const IntNode &b) {
+                            if (std::abs(a.dist - b.dist) > 1e-9) return a.dist < b.dist;
+                            return (int)a.is_model > (int)b.is_model;
+                        });
+
+                    // Remove old edges along the model path.
+                    for (int k = 0; k < (int)p_model.size() - 1; ++k) {
+                        auto [ed, found] = boost::edge(p_model[k], p_model[k + 1], model_tree);
+                        if (found) boost::remove_edge(ed, model_tree);
+                    }
+
+                    // Add new model vertices for obs intermediates; record mapping.
+                    for (auto &inter : intermediates) {
+                        if (!inter.is_model) {
+                            const ObservedNode &on = obs_tree[inter.orig_vd];
+                            ModelNode mn(on.id, frame_count);
+                            mn.tree_per_frame.emplace_back(on, td, frame_count);
+                            int new_mvd = (int)boost::add_vertex(mn, model_tree);
+                            obs_to_model_vd[inter.orig_vd] = new_mvd;
+                            inter.model_vd = new_mvd;
+                        }
+                    }
+
+                    // Wire new chain: mb_vd → sorted intermediates → ma_vd.
+                    int prev_mvd = mb_vd;
+                    for (const auto &inter : intermediates) {
+                        boost::add_edge(prev_mvd, inter.model_vd, model_tree);
+                        prev_mvd = inter.model_vd;
+                    }
+                    boost::add_edge(prev_mvd, ma_vd, model_tree);
+
+                    // Append new observations to both endpoint model nodes.
+                    model_tree[mb_vd].tree_per_frame.emplace_back(obs_tree[cb_vd], td, frame_count);
+                    model_tree[ma_vd].tree_per_frame.emplace_back(obs_tree[ca_vd], td, frame_count);
+                }
+            }
+
+            // ----------------------------------------------------------------
+            // PART 1 — unmatched nodes that descend from at least one matched node
+            // ----------------------------------------------------------------
+            // Mark every obs node whose subtree-path to root passes through a matched node.
+            unordered_set<int> has_matched_ancestor;
+            {
+                function<void(int, bool)> dfs = [&](int v, bool anc_matched) {
+                    if (anc_matched) has_matched_ancestor.insert(v);
+                    bool child_anc = anc_matched || (obs_tree[v].track_cnt > 1);
+                    for (auto e : boost::make_iterator_range(boost::out_edges(v, obs_tree)))
+                        dfs((int)boost::target(e, obs_tree), child_anc);
+                };
+                for (int v = 0; v < (int)boost::num_vertices(obs_tree); ++v)
+                    if (boost::in_degree(v, obs_tree) == 0)
+                        dfs(v, false);
+            }
+
+            // BFS top-down so parents are always resolved before their children.
+            {
+                queue<int> q;
+                for (int v = 0; v < (int)boost::num_vertices(obs_tree); ++v)
+                    if (boost::in_degree(v, obs_tree) == 0) q.push(v);
+
+                while (!q.empty()) {
+                    int v = q.front(); q.pop();
+                    for (auto e : boost::make_iterator_range(boost::out_edges(v, obs_tree)))
+                        q.push((int)boost::target(e, obs_tree));
+
+                    if (obs_tree[v].track_cnt > 1)         continue; // matched
+                    if (path_obs_intermediates.count(v))   continue; // Part 3 intermediate
+                    if (!has_matched_ancestor.count(v))    continue; // above all matches
+
+                    const ObservedNode &on = obs_tree[v];
+                    ModelNode mn(on.id, frame_count);
+                    mn.tree_per_frame.emplace_back(on, td, frame_count);
+                    int new_mvd = (int)boost::add_vertex(mn, model_tree);
+                    obs_to_model_vd[v] = new_mvd;
+
+                    // Connect to parent using the resolved model vd.
+                    auto [ie, ie_end] = boost::in_edges(v, obs_tree);
+                    if (ie != ie_end) {
+                        int par_obs_vd = (int)boost::source(*ie, obs_tree);
+                        auto it = obs_to_model_vd.find(par_obs_vd);
+                        if (it != obs_to_model_vd.end())
+                            boost::add_edge(it->second, new_mvd, model_tree);
+                    }
+                }
+            }
+
             last_t_track_num++;
         }
     }

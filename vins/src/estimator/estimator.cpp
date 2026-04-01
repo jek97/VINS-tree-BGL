@@ -996,7 +996,7 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
     ROS_DEBUG("Adding image feature points %lu", image.size());
     ROS_DEBUG("Adding tree feature points %lu", tree.second.size());
     
-    if (f_manager.addFeatureTreeCheckParallax(frame_count, header, image, tree, td)) // check if it's a keyframe or not and in case set the corresponding flag
+    if (f_manager.addFeatureTreeCheckParallax(frame_count, header, image, tree, td, Rs, Ps, ric[0], tic[0])) // check if it's a keyframe or not and in case set the corresponding flag
     {
         marginalization_flag = MARGIN_OLD;
         //printf("keyframe\n");
