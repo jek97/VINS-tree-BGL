@@ -937,16 +937,10 @@ void Estimator::rebuildLastModelForest()
     std::lock_guard<std::mutex> lk(Mlmodel);
     last_model_forest.clear();
 
-    std::ostringstream oss_lmf;
-    oss_lmf << "=========================================================================\nrebuildLastModelForest\n";
-
-    size_t tree_idx = 0;
     for (const auto &model_tree : f_manager.t_feature)
     {
         ObservedTree obs_tree;
         const int nv = (int)boost::num_vertices(model_tree);
-        oss_lmf << "  model_tree " << tree_idx++ << "  nodes=" << nv
-                << "  edges=" << boost::num_edges(model_tree) << "\n";
 
         // Pass 1: add vertices in the same index order as model_tree (vecS indices
         // are stable 0..nv-1, so vertex descriptors map 1-to-1 between the two graphs).
@@ -978,18 +972,6 @@ void Estimator::rebuildLastModelForest()
                 obs.timestamp = Headers[anchor_frame];
             }
 
-            // Log anchor frame, rotation matrix, and translation vector for this node.
-            oss_lmf << "    node id=" << node.feature_id << " anchor_frame=" << anchor_frame << "\n";
-            if (anchor_frame >= 0)
-            {
-                const Matrix3d &R = Rs[anchor_frame];
-                const Vector3d &P = Ps[anchor_frame];
-                oss_lmf << "      R=[ [" << R(0,0) << ", " << R(0,1) << ", " << R(0,2) << "],\n"
-                        << "          [" << R(1,0) << ", " << R(1,1) << ", " << R(1,2) << "],\n"
-                        << "          [" << R(2,0) << ", " << R(2,1) << ", " << R(2,2) << "] ]\n"
-                        << "      t=[ " << P(0) << ", " << P(1) << ", " << P(2) << " ]\n";
-            }
-
             boost::add_vertex(obs, obs_tree);
         }
 
@@ -1002,30 +984,6 @@ void Estimator::rebuildLastModelForest()
 
         last_model_forest.push_back(std::move(obs_tree));
     }
-
-    oss_lmf << "---------  obs_trees (last_model_forest)  ---------\n";
-    for (size_t ti = 0; ti < last_model_forest.size(); ++ti)
-    {
-        const ObservedTree& t = last_model_forest[ti];
-        oss_lmf << "  tree " << ti << "  nodes=" << boost::num_vertices(t)
-                << "  edges=" << boost::num_edges(t) << "\n";
-        for (int v = 0; v < (int)boost::num_vertices(t); ++v)
-        {
-            const ObservedNode& n = t[v];
-            std::string parent_exid = "none";
-            auto [ie, ie_end] = boost::in_edges(v, t);
-            if (ie != ie_end)
-                parent_exid = t[boost::source(*ie, t)].ex_id;
-            std::string sons_str;
-            for (auto e : boost::make_iterator_range(boost::out_edges(v, t)))
-                sons_str += t[boost::target(e, t)].ex_id + " ";
-            if (sons_str.empty()) sons_str = "none";
-            oss_lmf << "    node id=" << n.id << " ex_id=" << n.ex_id
-                    << " pos=(" << n.x << ", " << n.y << ", " << n.z << ")"
-                    << " parent=" << parent_exid << " sons=[" << sons_str << "]\n";
-        }
-    }
-    logMessage(oss_lmf.str());
 }
 
 void Estimator::processImage_tree(const double header, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const pair<double, vector<pair<int, ObservedTree>>> &tree)
@@ -1044,36 +1002,6 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
     {
         marginalization_flag = MARGIN_SECOND_NEW;
         //printf("non-keyframe\n");
-    }
-
-    {
-        std::ostringstream oss;
-        oss << "=========================================================================\n"
-            << "processImage_tree after addFeatureTreeCheckParallax"
-            << "  frame=" << frame_count
-            << "  trees=" << f_manager.t_feature.size() << "\n";
-        for (size_t ti = 0; ti < f_manager.t_feature.size(); ++ti)
-        {
-            const ModelTree &mt = f_manager.t_feature[ti];
-            const int nv = (int)boost::num_vertices(mt);
-            oss << "  tree " << ti << "  nodes=" << nv
-                << "  edges=" << boost::num_edges(mt) << "\n";
-            for (int v = 0; v < nv; ++v)
-            {
-                const ModelNode &node = mt[v];
-                oss << "    node id=" << node.feature_id
-                    << " depth=" << node.estimated_depth
-                    << " obs=" << node.tree_per_frame.size();
-                if (!node.tree_per_frame.empty())
-                {
-                    const Vector3d &pt = node.tree_per_frame.back().point;
-                    oss << " latest_frame=" << node.tree_per_frame.back().frame
-                        << " point=(" << pt.x() << ", " << pt.y() << ", " << pt.z() << ")";
-                }
-                oss << "\n";
-            }
-        }
-        logMessage(oss.str());
     }
 
     ROS_DEBUG("%s", marginalization_flag ? "Non-keyframe" : "Keyframe");

@@ -963,73 +963,16 @@ void FeatureTracker::removeNode(const string& node_id, ObservedTree& graph)
 
 void FeatureTracker::match(string node_0, string node_1, ObservedTree& graph_0, ObservedTree& graph_1, vector<pair<double, pair<string, string>>>& final_matches)
 {
-    // helper: log a tree (id, ex_id, pos, parent, sons)
-    auto log_subtree = [&](const ObservedTree& tree, const std::string& label)
-    {
-        std::ostringstream o;
-        o << label << "  nodes=" << boost::num_vertices(tree) << "\n";
-        for (int v = 0; v < (int)boost::num_vertices(tree); ++v)
-        {
-            const ObservedNode& n = tree[v];
-            std::string parent_exid = "none";
-            auto [ie, ie_end] = boost::in_edges(v, tree);
-            if (ie != ie_end)
-                parent_exid = tree[boost::source(*ie, tree)].ex_id;
-            std::string sons_str;
-            for (auto e : boost::make_iterator_range(boost::out_edges(v, tree)))
-                sons_str += tree[boost::target(e, tree)].ex_id + " ";
-            if (sons_str.empty()) sons_str = "none";
-            o << "    v" << v
-              << " id=" << n.id << " ex_id=" << n.ex_id
-              << " pos=(" << n.x << "," << n.y << "," << n.z << ")"
-              << " parent=" << parent_exid
-              << " sons=[" << sons_str << "]\n";
-        }
-        logMessage(o.str());
-    };
-
-    // --- DEBUG: new match() iteration ---
-    {
-        std::ostringstream o;
-        o << "  [match] iteration  node_0=" << node_0 << "  node_1=" << node_1 << "\n";
-        logMessage(o.str());
-    }
-
-    // get the subtree rooted at node_0 in graph_0 and at node_1 in graph_1
     ObservedTree sub_0 = subtree(graph_0, node_0);
     ObservedTree sub_1 = subtree(graph_1, node_1);
 
-    log_subtree(sub_0, "    sub_0:");
-    log_subtree(sub_1, "    sub_1:");
-
     while(boost::num_vertices(sub_0) > 0 && boost::num_vertices(sub_1) > 0)
     {
-        // evaluate capacity and cost matrix for minimum cost maximum cardinality bipartite matching
         auto [capacity, cost] = tree_bipartite_capacity_cost_evaluation(sub_0, sub_1);
 
-        // --- DEBUG: capacity and cost matrices ---
-        {
-            std::ostringstream o;
-            o << "    [match] capacity matrix (" << capacity.size() << "x" << (capacity.empty() ? 0 : capacity[0].size()) << "):\n";
-            for (const auto& row : capacity) { o << "      "; for (double v : row) o << v << " "; o << "\n"; }
-            o << "    [match] cost matrix (" << cost.size() << "x" << (cost.empty() ? 0 : cost[0].size()) << "):\n";
-            for (const auto& row : cost)     { o << "      "; for (double v : row) o << v << " "; o << "\n"; }
-            logMessage(o.str());
-        }
-
-        // find minimum cost maximum cardinality bipartite matching
         FeatureTracker::BpMatcher matcher(capacity.size());
         vector<double> ret = matcher.getMaxFlow(capacity, cost, 0, capacity.size() -1);
         vector<pair<double, pair<string, string>>> matches = matcher.get_tree_matchings(sub_0, sub_1);
-
-        // --- DEBUG: all matchings from get_tree_matchings ---
-        {
-            std::ostringstream o;
-            o << "    [match] get_tree_matchings results (" << matches.size() << "):\n";
-            for (const auto& m : matches)
-                o << "      cost=" << m.first << "  " << m.second.first << " <-> " << m.second.second << "\n";
-            logMessage(o.str());
-        }
 
         // get matching with minimum cost
         pair<double, pair<string, string>> mc_match;
@@ -1093,11 +1036,6 @@ pair<double, vector<pair<pair<string, string>, double>>> FeatureTracker::isomorp
     const string node_1 = tree_1[*std::find_if(vs1_begin, vs1_end,
         [&](VD v){ return boost::in_degree(v, tree_1) == 0; })].ex_id;
 
-    {
-        std::ostringstream o;
-        o << "  [isomorphism] root cur_tree=" << node_0 << "  root model_tree=" << node_1 << "\n";
-        logMessage(o.str());
-    }
     match(node_0, node_1, tree_0, tree_1, matches);
 
 
