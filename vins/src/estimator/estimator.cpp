@@ -1060,32 +1060,16 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
             for (int v = 0; v < nv; ++v)
             {
                 const ModelNode &node = mt[v];
-                double wx = 0, wy = 0, wz = 0;
-                Vector3d cam_pt(0, 0, 0);
-                int anchor = -1;
-                if (node.estimated_depth > 0 && !node.tree_per_frame.empty())
-                {
-                    anchor  = node.start_frame;
-                    cam_pt  = node.estimated_depth * node.tree_per_frame[0].point.normalized();
-                    Vector3d pts_imu = ric[0] * cam_pt + tic[0];
-                    Vector3d pts_w   = Rs[anchor] * pts_imu + Ps[anchor];
-                    wx = pts_w.x(); wy = pts_w.y(); wz = pts_w.z();
-                }
-                else if (!node.tree_per_frame.empty())
-                {
-                    const TreePerFrame &latest = node.tree_per_frame.back();
-                    anchor  = latest.frame;
-                    cam_pt  = latest.point;  // raw camera-frame coords (same as ObservedNode.x/y/z)
-                    Vector3d pts_imu = ric[0] * cam_pt + tic[0];
-                    Vector3d pts_w   = Rs[anchor] * pts_imu + Ps[anchor];
-                    wx = pts_w.x(); wy = pts_w.y(); wz = pts_w.z();
-                }
-                // cam_pt matches the x/y/z printed by the "E pm forest" log in processMeasurements.
-                // world pos = Rs[anchor] * (ric[0] * cam_pt + tic[0]) + Ps[anchor].
                 oss << "    node id=" << node.feature_id
-                    << " anchor=" << anchor
-                    << " cam_pos=(" << cam_pt.x() << ", " << cam_pt.y() << ", " << cam_pt.z() << ")"
-                    << " world_pos=(" << wx << ", " << wy << ", " << wz << ")\n";
+                    << " depth=" << node.estimated_depth
+                    << " obs=" << node.tree_per_frame.size();
+                if (!node.tree_per_frame.empty())
+                {
+                    const Vector3d &pt = node.tree_per_frame.back().point;
+                    oss << " latest_frame=" << node.tree_per_frame.back().frame
+                        << " point=(" << pt.x() << ", " << pt.y() << ", " << pt.z() << ")";
+                }
+                oss << "\n";
             }
         }
         logMessage(oss.str());
@@ -1857,8 +1841,8 @@ bool Estimator::failureDetection()
 
 void Estimator::optimization()
 {
-    // Helper: log all model trees (id + world-frame position) to a stream.
-    // Mirrors the position computation used in rebuildLastModelForest.
+    // Helper: log all model trees with the raw coordinates stored in the model
+    // (TreePerFrame.point = camera-frame x/y/z as received, no projection applied).
     auto log_model_trees = [&](std::ostringstream &o, const char *label)
     {
         o << "=========================================================================\n"
@@ -1872,27 +1856,16 @@ void Estimator::optimization()
             for (int v = 0; v < nv; ++v)
             {
                 const ModelNode &node = mt[v];
-                double wx = 0, wy = 0, wz = 0;
-                int anchor = -1;
-                if (node.estimated_depth > 0 && !node.tree_per_frame.empty())
-                {
-                    anchor = node.start_frame;
-                    const Vector3d &pt0 = node.tree_per_frame[0].point;
-                    Vector3d pts_imu = ric[0] * (node.estimated_depth * pt0.normalized()) + tic[0];
-                    Vector3d pts_w   = Rs[anchor] * pts_imu + Ps[anchor];
-                    wx = pts_w.x(); wy = pts_w.y(); wz = pts_w.z();
-                }
-                else if (!node.tree_per_frame.empty())
-                {
-                    const TreePerFrame &latest = node.tree_per_frame.back();
-                    anchor = latest.frame;
-                    Vector3d pts_imu = ric[0] * latest.point + tic[0];
-                    Vector3d pts_w   = Rs[anchor] * pts_imu + Ps[anchor];
-                    wx = pts_w.x(); wy = pts_w.y(); wz = pts_w.z();
-                }
                 o << "    node id=" << node.feature_id
-                  << " anchor=" << anchor
-                  << " pos=(" << wx << ", " << wy << ", " << wz << ")\n";
+                  << " depth=" << node.estimated_depth
+                  << " obs=" << node.tree_per_frame.size();
+                if (!node.tree_per_frame.empty())
+                {
+                    const Vector3d &pt = node.tree_per_frame.back().point;
+                    o << " latest_frame=" << node.tree_per_frame.back().frame
+                      << " point=(" << pt.x() << ", " << pt.y() << ", " << pt.z() << ")";
+                }
+                o << "\n";
             }
         }
     };
