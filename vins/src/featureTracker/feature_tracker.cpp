@@ -1379,10 +1379,12 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
             return cv::Point(static_cast<int>(uvs[0] / uvs[2]), static_cast<int>(uvs[1] / uvs[2]));
         };
 
-        // project world-frame point to pixel
+        // project world-frame point to pixel (must match the pipeline used by project()).
+        // world → left-camera (last_R, last_P, last_ric, last_tic) → tree-sensor (T_tree_lcam) → pixel (K_mat)
         auto project_world = [&](double x, double y, double z) -> cv::Point {
-            Eigen::Vector3d pts_cam = last_ric.transpose() * (last_R.transpose() * (Eigen::Vector3d(x, y, z) - last_P) - last_tic);
-            Eigen::Vector3d uvs = K_mat * pts_cam;
+            Eigen::Vector3d pts_lcam = last_ric.transpose() * (last_R.transpose() * (Eigen::Vector3d(x, y, z) - last_P) - last_tic);
+            Eigen::Vector3d pts_tree = (T_tree_lcam * Eigen::Vector4d(pts_lcam.x(), pts_lcam.y(), pts_lcam.z(), 1.0)).head<3>();
+            Eigen::Vector3d uvs = K_mat * pts_tree;
             return cv::Point(static_cast<int>(uvs[0] / uvs[2]), static_cast<int>(uvs[1] / uvs[2]));
         };
 
