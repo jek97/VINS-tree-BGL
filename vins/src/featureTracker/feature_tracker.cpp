@@ -1181,6 +1181,43 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
     {
         evaluate_fd(last_model_forest);
 
+        // Log cur_forest (world frame) and last_model_forest (world frame) before matching.
+        {
+            std::ostringstream oss;
+            oss << "=========================================================================\n"
+                << "trackForest  t=" << std::setprecision(15) << _cur_time << "\n";
+
+            oss << "  cur_forest (world frame)  trees=" << cur_forest.size() << "\n";
+            for (size_t i = 0; i < cur_forest.size(); ++i)
+            {
+                const ObservedTree &ct = cur_forest[i];
+                oss << "    tree " << i << "  nodes=" << boost::num_vertices(ct) << "\n";
+                for (int v = 0; v < (int)boost::num_vertices(ct); ++v)
+                {
+                    const ObservedNode &n = ct[v];
+                    Eigen::Vector3d p_cam(n.x, n.y, n.z);
+                    Eigen::Vector3d p_w = last_R * (last_ric * p_cam + last_tic) + last_P;
+                    oss << "      node id=" << n.id << " ex_id=" << n.ex_id
+                        << " world=(" << p_w.x() << ", " << p_w.y() << ", " << p_w.z() << ")\n";
+                }
+            }
+
+            oss << "  last_model_forest (world frame)  trees=" << last_model_forest.size() << "\n";
+            for (size_t i = 0; i < last_model_forest.size(); ++i)
+            {
+                const ObservedTree &mt = last_model_forest[i];
+                oss << "    tree " << i << "  nodes=" << boost::num_vertices(mt) << "\n";
+                for (int v = 0; v < (int)boost::num_vertices(mt); ++v)
+                {
+                    const ObservedNode &n = mt[v];
+                    oss << "      node id=" << n.id << " ex_id=" << n.ex_id
+                        << " world=(" << n.x << ", " << n.y << ", " << n.z << ")\n";
+                }
+            }
+
+            logMessage(oss.str());
+        }
+
         // run matching: cur_forest (camera frame) vs last_model_forest (world frame).
         // tree_bipartite_capacity_cost_evaluation handles the per-node frame conversion internally.
         vector<vector<pair<double, vector<pair<pair<string, string>, double>>>>> tree_matches(
