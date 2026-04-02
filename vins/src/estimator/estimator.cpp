@@ -292,25 +292,6 @@ void Estimator::inputForest(double t, std::pair<bool, ObservedForest> &forest)
         featureTracker.last_ric = ric[0];
         featureTracker.last_tic = tic[0];
 
-        {
-            const Matrix3d &R = featureTracker.last_R;
-            const Vector3d &P = featureTracker.last_P;
-            const Matrix3d &Ric = featureTracker.last_ric;
-            const Vector3d &Tic = featureTracker.last_tic;
-            std::ostringstream oss;
-            oss << "=========================================================================\n"
-                << "inputForest before trackForest\n"
-                << "  last_R=[ [" << R(0,0) << ", " << R(0,1) << ", " << R(0,2) << "],\n"
-                << "           [" << R(1,0) << ", " << R(1,1) << ", " << R(1,2) << "],\n"
-                << "           [" << R(2,0) << ", " << R(2,1) << ", " << R(2,2) << "] ]\n"
-                << "  last_P=[ " << P(0) << ", " << P(1) << ", " << P(2) << " ]\n"
-                << "  last_ric=[ [" << Ric(0,0) << ", " << Ric(0,1) << ", " << Ric(0,2) << "],\n"
-                << "             [" << Ric(1,0) << ", " << Ric(1,1) << ", " << Ric(1,2) << "],\n"
-                << "             [" << Ric(2,0) << ", " << Ric(2,1) << ", " << Ric(2,2) << "] ]\n"
-                << "  last_tic=[ " << Tic(0) << ", " << Tic(1) << ", " << Tic(2) << " ]\n";
-            logMessage(oss.str());
-        }
-
         t_featureFrame.second = featureTracker.trackForest(t, forest.second);
         auto [joinedImage, cam_info, match_time] = featureTracker.getTreeMatch();
         pubTreeMatchImage(joinedImage, cam_info, match_time);
@@ -1861,41 +1842,6 @@ bool Estimator::failureDetection()
 
 void Estimator::optimization()
 {
-    // Helper: log all model trees with the raw coordinates stored in the model
-    // (TreePerFrame.point = camera-frame x/y/z as received, no projection applied).
-    auto log_model_trees = [&](std::ostringstream &o, const char *label)
-    {
-        o << "=========================================================================\n"
-          << label << "  optimization()  trees=" << f_manager.t_feature.size() << "\n";
-        for (size_t ti = 0; ti < f_manager.t_feature.size(); ++ti)
-        {
-            const ModelTree &mt = f_manager.t_feature[ti];
-            const int nv = (int)boost::num_vertices(mt);
-            o << "  tree " << ti << "  nodes=" << nv
-              << "  edges=" << boost::num_edges(mt) << "\n";
-            for (int v = 0; v < nv; ++v)
-            {
-                const ModelNode &node = mt[v];
-                o << "    node id=" << node.feature_id
-                  << " depth=" << node.estimated_depth
-                  << " obs=" << node.tree_per_frame.size();
-                if (!node.tree_per_frame.empty())
-                {
-                    const Vector3d &pt = node.tree_per_frame.back().point;
-                    o << " latest_frame=" << node.tree_per_frame.back().frame
-                      << " point=(" << pt.x() << ", " << pt.y() << ", " << pt.z() << ")";
-                }
-                o << "\n";
-            }
-        }
-    };
-
-    {
-        std::ostringstream oss;
-        log_model_trees(oss, "PRE");
-        logMessage(oss.str());
-    }
-
     TicToc t_whole, t_prepare;
     vector2double(); // save all the needed quantities in the correct format
 
@@ -2880,12 +2826,6 @@ void Estimator::optimization()
     
     //printf("whole marginalization costs: %f \n", t_whole_marginalization.toc());
     //printf("whole time for ceres: %f \n", t_whole.toc());
-
-    {
-        std::ostringstream oss;
-        log_model_trees(oss, "POST");
-        logMessage(oss.str());
-    }
 }
 
 void Estimator::slideWindow()

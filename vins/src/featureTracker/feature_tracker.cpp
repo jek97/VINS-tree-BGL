@@ -1253,39 +1253,6 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
         for(size_t i = 0; i < cur_forest.size(); ++i)
             for(size_t j = 0; j < last_model_forest.size(); ++j)
             {
-                // --- DEBUG: log both trees before calling isomorphism ---
-                auto log_tree = [&](const ObservedTree& tree, const std::string& label)
-                {
-                    std::ostringstream o;
-                    o << label << "  nodes=" << boost::num_vertices(tree) << "\n";
-                    for (int v = 0; v < (int)boost::num_vertices(tree); ++v)
-                    {
-                        const ObservedNode& n = tree[v];
-                        // parent
-                        std::string parent_exid = "none";
-                        auto [ie, ie_end] = boost::in_edges(v, tree);
-                        if (ie != ie_end)
-                            parent_exid = tree[boost::source(*ie, tree)].ex_id;
-                        // sons
-                        std::string sons_str;
-                        for (auto e : boost::make_iterator_range(boost::out_edges(v, tree)))
-                            sons_str += tree[boost::target(e, tree)].ex_id + " ";
-                        if (sons_str.empty()) sons_str = "none";
-                        o << "  v" << v
-                          << " id=" << n.id << " ex_id=" << n.ex_id
-                          << " pos=(" << n.x << "," << n.y << "," << n.z << ")"
-                          << " parent=" << parent_exid
-                          << " sons=[" << sons_str << "]\n";
-                    }
-                    logMessage(o.str());
-                };
-                std::ostringstream ohdr;
-                ohdr << "=========================================================================\n"
-                     << "Isomorphism cur_tree=" << i << " model_tree=" << j << "\n";
-                logMessage(ohdr.str());
-                log_tree(cur_forest[i],        "  cur_tree:");
-                log_tree(last_model_forest[j], "  model_tree:");
-                // --- END DEBUG ---
                 tree_matches[i][j] = isomorphism(cur_forest[i], last_model_forest[j]);
             }
 
@@ -1371,27 +1338,6 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
             cur_line_colors.push_back(genRandomColor());
         }
 
-        {
-            std::ostringstream oss;
-            oss << "=========================================================================\n"
-                << "match_img model nodes in camera frame\n";
-            for (size_t ti = 0; ti < last_model_forest.size(); ++ti)
-            {
-                const ObservedTree &mt = last_model_forest[ti];
-                oss << "  model_tree " << ti << "  nodes=" << boost::num_vertices(mt) << "\n";
-                for (int v = 0; v < (int)boost::num_vertices(mt); ++v)
-                {
-                    const ObservedNode &n = mt[v];
-                    Eigen::Vector3d pts_lcam = last_ric.transpose() *
-                        (last_R.transpose() * (Eigen::Vector3d(n.x, n.y, n.z) - last_P) - last_tic);
-                    oss << "    node id=" << n.id << " ex_id=" << n.ex_id
-                        << " world=(" << n.x << ", " << n.y << ", " << n.z << ")"
-                        << " cam=(" << pts_lcam.x() << ", " << pts_lcam.y() << ", " << pts_lcam.z() << ")\n";
-                }
-            }
-            logMessage(oss.str());
-        }
-
         cv::Mat match_img_ = drawForest(cur_forest, T_tree_lcam, cur_circle_colors, cur_line_colors);
 
         // project tree-sensor-frame point to pixel
@@ -1401,7 +1347,7 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
             return cv::Point(static_cast<int>(uvs[0] / uvs[2]), static_cast<int>(uvs[1] / uvs[2]));
         };
 
-        // project world-frame point to pixel (must match the pipeline used by project()).
+        // project world-frame point to pixel:
         // world → left-camera (last_R, last_P, last_ric, last_tic) → tree-sensor (T_tree_lcam) → pixel (K_mat)
         auto project_world = [&](double x, double y, double z) -> cv::Point {
             Eigen::Vector3d pts_lcam = last_ric.transpose() * (last_R.transpose() * (Eigen::Vector3d(x, y, z) - last_P) - last_tic);
@@ -1410,6 +1356,41 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
             return cv::Point(static_cast<int>(uvs[0] / uvs[2]), static_cast<int>(uvs[1] / uvs[2]));
         };
 
+        // Draw all model trees in black (nodes as filled circles, edges as lines).
+        // Only draws points that project inside the image bounds.
+        const cv::Rect img_rect(0, 0, match_img_.cols, match_img_.rows);
+        const cv::Scalar black(0, 0, 0);
+        for (const ObservedTree &mt : last_model_forest)
+        {
+            const int nv = (int)boost::num_vertices(mt);
+            // cache projected positions so edges can reuse them
+            std::vector<cv::Point> px(nv);
+            std::vector<bool>      valid(nv, false);
+            for (int v = 0; v < nv; ++v)
+            {
+                const ObservedNode &n = mt[v];
+                cv::Point p = project_world(n.x, n.y, n.z);
+                if (img_rect.contains(p))
+                {
+                    px[v]    = p;
+                    valid[v] = true;
+                    cv::circle(match_img_, p, 4, black, -1);
+                }
+            }
+            // draw edges only when both endpoints are visible
+            for (int v = 0; v < nv; ++v)
+            {
+                if (!valid[v]) continue;
+                for (auto e : boost::make_iterator_range(boost::out_edges(v, mt)))
+                {
+                    const int c = (int)boost::target(e, mt);
+                    if (valid[c])
+                        cv::line(match_img_, px[v], px[c], black, 2, cv::LINE_8);
+                }
+            }
+        }
+
+        // Draw green arrows from each matched model node to the corresponding current node.
         for (size_t i = 0; i < cur_forest.size(); ++i)
         {
             if (filtered_matches[i].first != -1)
