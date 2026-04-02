@@ -1919,7 +1919,7 @@ class VinsNode : public rclcpp::Node, public std::enable_shared_from_this<VinsNo
                 {
                     ObservedNode node;
                     node.ex_id     = std::to_string(ids[point]);
-                    node.id        = ids[point];
+                    node.id        = -1;
                     node.component = component_id;
 
                     // 3-D position via depth back-projection + extrinsic transform
