@@ -291,6 +291,26 @@ void Estimator::inputForest(double t, std::pair<bool, ObservedForest> &forest)
         featureTracker.last_P   = Ps[WINDOW_SIZE];
         featureTracker.last_ric = ric[0];
         featureTracker.last_tic = tic[0];
+
+        {
+            const Matrix3d &R = featureTracker.last_R;
+            const Vector3d &P = featureTracker.last_P;
+            const Matrix3d &Ric = featureTracker.last_ric;
+            const Vector3d &Tic = featureTracker.last_tic;
+            std::ostringstream oss;
+            oss << "=========================================================================\n"
+                << "inputForest before trackForest\n"
+                << "  last_R=[ [" << R(0,0) << ", " << R(0,1) << ", " << R(0,2) << "],\n"
+                << "           [" << R(1,0) << ", " << R(1,1) << ", " << R(1,2) << "],\n"
+                << "           [" << R(2,0) << ", " << R(2,1) << ", " << R(2,2) << "] ]\n"
+                << "  last_P=[ " << P(0) << ", " << P(1) << ", " << P(2) << " ]\n"
+                << "  last_ric=[ [" << Ric(0,0) << ", " << Ric(0,1) << ", " << Ric(0,2) << "],\n"
+                << "             [" << Ric(1,0) << ", " << Ric(1,1) << ", " << Ric(1,2) << "],\n"
+                << "             [" << Ric(2,0) << ", " << Ric(2,1) << ", " << Ric(2,2) << "] ]\n"
+                << "  last_tic=[ " << Tic(0) << ", " << Tic(1) << ", " << Tic(2) << " ]\n";
+            logMessage(oss.str());
+        }
+
         t_featureFrame.second = featureTracker.trackForest(t, forest.second);
         auto [joinedImage, cam_info, match_time] = featureTracker.getTreeMatch();
         pubTreeMatchImage(joinedImage, cam_info, match_time);
