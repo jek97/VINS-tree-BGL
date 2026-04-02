@@ -760,18 +760,19 @@ pair<vector<vector<double>>, vector<vector<double>>> FeatureTracker::tree_bipart
             double topological_distance = (cur_topological_fd - prev_topological_fd).norm();
 
             // final distance
-            // double custom_dist = (dist_2d * ((prev_depth + cur_depth) / 2)) + topological_distance;
-            double custom_dist = (p_0_w - p_1_w).norm() + topological_distance;
+            double custom_dist = (dist_2d * ((prev_depth + cur_depth) / 2)) + topological_distance;
+            // double custom_dist = (p_0_w - p_1_w).norm() + topological_distance;
             cost_mat[i + 1][nL + 1 + j] = custom_dist;
 
             // capacity: use world-frame 3D distance for position gate
-            if((p_0_w - p_1_w).norm() <= TREE_METRIC_MATCH_THRESH)
-                capacity_mat[i + 1][nL + 1 + j] = 1;
-            else
-                capacity_mat[i + 1][nL + 1 + j] = 0;
+            capacity_mat[i + 1][nL + 1 + j] = 1;
+            // if((p_0_w - p_1_w).norm() <= TREE_METRIC_MATCH_THRESH)
+            //     capacity_mat[i + 1][nL + 1 + j] = 1;
+            // else
+            //     capacity_mat[i + 1][nL + 1 + j] = 0;
         }
     }
-
+    
     for(int i = 0; i < nL; ++i)
         capacity_mat[0][i + 1] = 1; // edges from source to L
 
