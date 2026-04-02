@@ -1191,14 +1191,23 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
             for (size_t i = 0; i < cur_forest.size(); ++i)
             {
                 const ObservedTree &ct = cur_forest[i];
-                oss << "    tree " << i << "  nodes=" << boost::num_vertices(ct) << "\n";
+                oss << "    tree " << i << "  nodes=" << boost::num_vertices(ct)
+                    << "  edges=" << boost::num_edges(ct) << "\n";
                 for (int v = 0; v < (int)boost::num_vertices(ct); ++v)
                 {
                     const ObservedNode &n = ct[v];
-                    Eigen::Vector3d p_cam(n.x, n.y, n.z);
-                    Eigen::Vector3d p_w = last_R * (last_ric * p_cam + last_tic) + last_P;
+                    Eigen::Vector3d p_w = last_R * (last_ric * Eigen::Vector3d(n.x, n.y, n.z) + last_tic) + last_P;
+                    std::string parent_exid = "none";
+                    auto [ie, ie_end] = boost::in_edges(v, ct);
+                    if (ie != ie_end)
+                        parent_exid = ct[boost::source(*ie, ct)].ex_id;
+                    std::string sons_str;
+                    for (auto e : boost::make_iterator_range(boost::out_edges(v, ct)))
+                        sons_str += ct[boost::target(e, ct)].ex_id + " ";
+                    if (sons_str.empty()) sons_str = "none";
                     oss << "      node id=" << n.id << " ex_id=" << n.ex_id
-                        << " world=(" << p_w.x() << ", " << p_w.y() << ", " << p_w.z() << ")\n";
+                        << " world=(" << p_w.x() << ", " << p_w.y() << ", " << p_w.z() << ")"
+                        << " parent=" << parent_exid << " sons=[" << sons_str << "]\n";
                 }
             }
 
@@ -1206,12 +1215,22 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
             for (size_t i = 0; i < last_model_forest.size(); ++i)
             {
                 const ObservedTree &mt = last_model_forest[i];
-                oss << "    tree " << i << "  nodes=" << boost::num_vertices(mt) << "\n";
+                oss << "    tree " << i << "  nodes=" << boost::num_vertices(mt)
+                    << "  edges=" << boost::num_edges(mt) << "\n";
                 for (int v = 0; v < (int)boost::num_vertices(mt); ++v)
                 {
                     const ObservedNode &n = mt[v];
+                    std::string parent_exid = "none";
+                    auto [ie, ie_end] = boost::in_edges(v, mt);
+                    if (ie != ie_end)
+                        parent_exid = mt[boost::source(*ie, mt)].ex_id;
+                    std::string sons_str;
+                    for (auto e : boost::make_iterator_range(boost::out_edges(v, mt)))
+                        sons_str += mt[boost::target(e, mt)].ex_id + " ";
+                    if (sons_str.empty()) sons_str = "none";
                     oss << "      node id=" << n.id << " ex_id=" << n.ex_id
-                        << " world=(" << n.x << ", " << n.y << ", " << n.z << ")\n";
+                        << " world=(" << n.x << ", " << n.y << ", " << n.z << ")"
+                        << " parent=" << parent_exid << " sons=[" << sons_str << "]\n";
                 }
             }
 
