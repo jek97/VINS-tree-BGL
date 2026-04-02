@@ -1810,7 +1810,53 @@ bool Estimator::failureDetection()
 }
 
 void Estimator::optimization()
-{   
+{
+    // Helper: log all model trees (id + world-frame position) to a stream.
+    // Mirrors the position computation used in rebuildLastModelForest.
+    auto log_model_trees = [&](std::ostringstream &o, const char *label)
+    {
+        o << "=========================================================================\n"
+          << label << "  optimization()  trees=" << f_manager.t_feature.size() << "\n";
+        for (size_t ti = 0; ti < f_manager.t_feature.size(); ++ti)
+        {
+            const ModelTree &mt = f_manager.t_feature[ti];
+            const int nv = (int)boost::num_vertices(mt);
+            o << "  tree " << ti << "  nodes=" << nv
+              << "  edges=" << boost::num_edges(mt) << "\n";
+            for (int v = 0; v < nv; ++v)
+            {
+                const ModelNode &node = mt[v];
+                double wx = 0, wy = 0, wz = 0;
+                int anchor = -1;
+                if (node.estimated_depth > 0 && !node.tree_per_frame.empty())
+                {
+                    anchor = node.start_frame;
+                    const Vector3d &pt0 = node.tree_per_frame[0].point;
+                    Vector3d pts_imu = ric[0] * (node.estimated_depth * pt0.normalized()) + tic[0];
+                    Vector3d pts_w   = Rs[anchor] * pts_imu + Ps[anchor];
+                    wx = pts_w.x(); wy = pts_w.y(); wz = pts_w.z();
+                }
+                else if (!node.tree_per_frame.empty())
+                {
+                    const TreePerFrame &latest = node.tree_per_frame.back();
+                    anchor = latest.frame;
+                    Vector3d pts_imu = ric[0] * latest.point + tic[0];
+                    Vector3d pts_w   = Rs[anchor] * pts_imu + Ps[anchor];
+                    wx = pts_w.x(); wy = pts_w.y(); wz = pts_w.z();
+                }
+                o << "    node id=" << node.feature_id
+                  << " anchor=" << anchor
+                  << " pos=(" << wx << ", " << wy << ", " << wz << ")\n";
+            }
+        }
+    };
+
+    {
+        std::ostringstream oss;
+        log_model_trees(oss, "PRE");
+        logMessage(oss.str());
+    }
+
     TicToc t_whole, t_prepare;
     vector2double(); // save all the needed quantities in the correct format
 
@@ -2795,6 +2841,12 @@ void Estimator::optimization()
     
     //printf("whole marginalization costs: %f \n", t_whole_marginalization.toc());
     //printf("whole time for ceres: %f \n", t_whole.toc());
+
+    {
+        std::ostringstream oss;
+        log_model_trees(oss, "POST");
+        logMessage(oss.str());
+    }
 }
 
 void Estimator::slideWindow()
