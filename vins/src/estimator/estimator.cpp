@@ -939,11 +939,15 @@ void Estimator::rebuildLastModelForest()
     {
         ObservedTree obs_tree;
         const int nv = (int)boost::num_vertices(model_tree);
+
+        // Pass 1: add vertices in the same index order as model_tree (vecS indices
+        // are stable 0..nv-1, so vertex descriptors map 1-to-1 between the two graphs).
         for (int v = 0; v < nv; ++v)
         {
             const ModelNode &node = model_tree[v];
             ObservedNode obs;
             obs.id        = node.feature_id;
+            obs.ex_id     = std::to_string(node.feature_id); // needed by isomorphism / matching
             obs.track_cnt = (int)node.tree_per_frame.size();
 
             if (node.estimated_depth > 0 && !node.tree_per_frame.empty())
@@ -966,10 +970,14 @@ void Estimator::rebuildLastModelForest()
 
             boost::add_vertex(obs, obs_tree);
         }
-        auto [ei, ei_end] = boost::edges(model_tree);
-        for (; ei != ei_end; ++ei)
-            boost::add_edge(boost::source(*ei, model_tree),
-                            boost::target(*ei, model_tree), obs_tree);
+
+        // Pass 2: mirror all directed edges (parent→child) from model_tree to obs_tree.
+        // Iterate vertex-by-vertex through out_edges so the copy is explicit and does not
+        // rely on the global boost::edges() ordering for bidirectionalS graphs.
+        for (int v = 0; v < nv; ++v)
+            for (auto e : boost::make_iterator_range(boost::out_edges(v, model_tree)))
+                boost::add_edge(v, (int)boost::target(e, model_tree), obs_tree);
+
         last_model_forest.push_back(std::move(obs_tree));
     }
 
@@ -978,12 +986,22 @@ void Estimator::rebuildLastModelForest()
     for (size_t ti = 0; ti < last_model_forest.size(); ++ti)
     {
         const ObservedTree& t = last_model_forest[ti];
-        oss_lmf << "  tree " << ti << "  nodes=" << boost::num_vertices(t) << "\n";
-        auto [vb, ve] = boost::vertices(t);
-        for (auto vd = vb; vd != ve; ++vd)
+        oss_lmf << "  tree " << ti << "  nodes=" << boost::num_vertices(t)
+                << "  edges=" << boost::num_edges(t) << "\n";
+        for (int v = 0; v < (int)boost::num_vertices(t); ++v)
         {
-            const ObservedNode& n = t[*vd];
-            oss_lmf << "    node id=" << n.id << " pos=(" << n.x << ", " << n.y << ", " << n.z << ")\n";
+            const ObservedNode& n = t[v];
+            std::string parent_exid = "none";
+            auto [ie, ie_end] = boost::in_edges(v, t);
+            if (ie != ie_end)
+                parent_exid = t[boost::source(*ie, t)].ex_id;
+            std::string sons_str;
+            for (auto e : boost::make_iterator_range(boost::out_edges(v, t)))
+                sons_str += t[boost::target(e, t)].ex_id + " ";
+            if (sons_str.empty()) sons_str = "none";
+            oss_lmf << "    node id=" << n.id << " ex_id=" << n.ex_id
+                    << " pos=(" << n.x << ", " << n.y << ", " << n.z << ")"
+                    << " parent=" << parent_exid << " sons=[" << sons_str << "]\n";
         }
     }
     logMessage(oss_lmf.str());
