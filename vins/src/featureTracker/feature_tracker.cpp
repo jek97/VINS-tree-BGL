@@ -1267,7 +1267,7 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
         };
 
         std::ostringstream oss;
-        oss << "=========================================================================\nFT matches at time " << std::setprecision(15) << _cur_time << std::endl;
+        oss << "=========================================================================\nFT matches at time " << std::setprecision(15) << _cur_time << "\n";
         int n_f_match = 0;
 
         // assign id, track count and evaluate velocity based on filtered matchings
@@ -1289,7 +1289,9 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
                     Eigen::Vector3d pn_w(pn.x, pn.y, pn.z);
                     Eigen::Vector3d pn_cam = last_ric.transpose() * (last_R.transpose() * (pn_w - last_P) - last_tic);
 
-                    oss << "    model node " << pn.ex_id << " cur node " << cn.ex_id << " new id " << pn.id << std::endl;
+                    oss << "  cur_tree=" << i << " model_tree=" << filtered_matches[i].first
+                        << "  cur_id=" << cn.id << " cur_ex_id=" << cn.ex_id
+                        << "  model_id=" << pn.id << " model_ex_id=" << pn.ex_id << "\n";
                     ++n_f_match;
                     cn.id        = pn.id;
                     cn.track_cnt = pn.track_cnt + 1;
@@ -1310,7 +1312,7 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
             if (cm.first != -1)
                 n_match += static_cast<int>(cm.second.size());
 
-        oss << "Total: " << n_match << " filtered " << n_f_match << std::endl;
+        oss << "Total: " << n_match << " filtered: " << n_f_match << "\n";
         logMessage(oss.str());
 
         // visualize: draw cur_forest and arrows to matched model nodes
