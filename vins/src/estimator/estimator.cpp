@@ -287,8 +287,8 @@ void Estimator::inputForest(double t, std::pair<bool, ObservedForest> &forest)
             std::scoped_lock lk(Mlmodel, featureTracker.Mlmodel);
             featureTracker.last_model_forest = last_model_forest;
         }
-        featureTracker.last_R   = Rs[WINDOW_SIZE];
-        featureTracker.last_P   = Ps[WINDOW_SIZE];
+        featureTracker.last_R   = Rs[frame_count];   // frame_count = latest valid index (< WINDOW_SIZE during init)
+        featureTracker.last_P   = Ps[frame_count];
         featureTracker.last_ric = ric[0];
         featureTracker.last_tic = tic[0];
 
