@@ -935,10 +935,17 @@ void Estimator::rebuildLastModelForest()
 {
     std::lock_guard<std::mutex> lk(Mlmodel);
     last_model_forest.clear();
+
+    std::ostringstream oss_lmf;
+    oss_lmf << "=========================================================================\nrebuildLastModelForest\n";
+
+    size_t tree_idx = 0;
     for (const auto &model_tree : f_manager.t_feature)
     {
         ObservedTree obs_tree;
         const int nv = (int)boost::num_vertices(model_tree);
+        oss_lmf << "  model_tree " << tree_idx++ << "  nodes=" << nv
+                << "  edges=" << boost::num_edges(model_tree) << "\n";
 
         // Pass 1: add vertices in the same index order as model_tree (vecS indices
         // are stable 0..nv-1, so vertex descriptors map 1-to-1 between the two graphs).
@@ -950,22 +957,36 @@ void Estimator::rebuildLastModelForest()
             obs.ex_id     = std::to_string(node.feature_id); // needed by isomorphism / matching
             obs.track_cnt = (int)node.tree_per_frame.size();
 
+            int anchor_frame = -1;
             if (node.estimated_depth > 0 && !node.tree_per_frame.empty())
             {
-                int anchor = node.start_frame;
+                anchor_frame = node.start_frame;
                 const Vector3d &pt0 = node.tree_per_frame[0].point;
                 Vector3d pts_imu = ric[0] * (node.estimated_depth * pt0.normalized()) + tic[0];
-                Vector3d pts_w   = Rs[anchor] * pts_imu + Ps[anchor];
+                Vector3d pts_w   = Rs[anchor_frame] * pts_imu + Ps[anchor_frame];
                 obs.x = pts_w.x(); obs.y = pts_w.y(); obs.z = pts_w.z();
-                obs.timestamp = Headers[anchor];
+                obs.timestamp = Headers[anchor_frame];
             }
             else if (!node.tree_per_frame.empty())
             {
                 const TreePerFrame &latest = node.tree_per_frame.back();
+                anchor_frame = latest.frame;
                 Vector3d pts_imu = ric[0] * latest.point + tic[0];
-                Vector3d pts_w   = Rs[latest.frame] * pts_imu + Ps[latest.frame];
+                Vector3d pts_w   = Rs[anchor_frame] * pts_imu + Ps[anchor_frame];
                 obs.x = pts_w.x(); obs.y = pts_w.y(); obs.z = pts_w.z();
-                obs.timestamp = Headers[latest.frame];
+                obs.timestamp = Headers[anchor_frame];
+            }
+
+            // Log anchor frame, rotation matrix, and translation vector for this node.
+            oss_lmf << "    node id=" << node.feature_id << " anchor_frame=" << anchor_frame << "\n";
+            if (anchor_frame >= 0)
+            {
+                const Matrix3d &R = Rs[anchor_frame];
+                const Vector3d &P = Ps[anchor_frame];
+                oss_lmf << "      R=[ [" << R(0,0) << ", " << R(0,1) << ", " << R(0,2) << "],\n"
+                        << "          [" << R(1,0) << ", " << R(1,1) << ", " << R(1,2) << "],\n"
+                        << "          [" << R(2,0) << ", " << R(2,1) << ", " << R(2,2) << "] ]\n"
+                        << "      t=[ " << P(0) << ", " << P(1) << ", " << P(2) << " ]\n";
             }
 
             boost::add_vertex(obs, obs_tree);
@@ -981,8 +1002,7 @@ void Estimator::rebuildLastModelForest()
         last_model_forest.push_back(std::move(obs_tree));
     }
 
-    std::ostringstream oss_lmf;
-    oss_lmf << "=========================================================================\nlast_model_forest formation result  trees=" << last_model_forest.size() << "\n";
+    oss_lmf << "---------  obs_trees (last_model_forest)  ---------\n";
     for (size_t ti = 0; ti < last_model_forest.size(); ++ti)
     {
         const ObservedTree& t = last_model_forest[ti];
