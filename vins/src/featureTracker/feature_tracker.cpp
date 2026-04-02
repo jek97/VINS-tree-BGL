@@ -1370,6 +1370,27 @@ pair<double, vector<pair<int, ObservedTree>>> FeatureTracker::trackForest(double
             cur_line_colors.push_back(genRandomColor());
         }
 
+        {
+            std::ostringstream oss;
+            oss << "=========================================================================\n"
+                << "match_img model nodes in camera frame\n";
+            for (size_t ti = 0; ti < last_model_forest.size(); ++ti)
+            {
+                const ObservedTree &mt = last_model_forest[ti];
+                oss << "  model_tree " << ti << "  nodes=" << boost::num_vertices(mt) << "\n";
+                for (int v = 0; v < (int)boost::num_vertices(mt); ++v)
+                {
+                    const ObservedNode &n = mt[v];
+                    Eigen::Vector3d pts_lcam = last_ric.transpose() *
+                        (last_R.transpose() * (Eigen::Vector3d(n.x, n.y, n.z) - last_P) - last_tic);
+                    oss << "    node id=" << n.id << " ex_id=" << n.ex_id
+                        << " world=(" << n.x << ", " << n.y << ", " << n.z << ")"
+                        << " cam=(" << pts_lcam.x() << ", " << pts_lcam.y() << ", " << pts_lcam.z() << ")\n";
+                }
+            }
+            logMessage(oss.str());
+        }
+
         cv::Mat match_img_ = drawForest(cur_forest, T_tree_lcam, cur_circle_colors, cur_line_colors);
 
         // project tree-sensor-frame point to pixel
