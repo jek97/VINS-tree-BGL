@@ -1045,6 +1045,47 @@ void Estimator::processImage_tree(const double header, const map<int, vector<pai
         //printf("non-keyframe\n");
     }
 
+    {
+        std::ostringstream oss;
+        oss << "=========================================================================\n"
+            << "processImage_tree after addFeatureTreeCheckParallax"
+            << "  frame=" << frame_count
+            << "  trees=" << f_manager.t_feature.size() << "\n";
+        for (size_t ti = 0; ti < f_manager.t_feature.size(); ++ti)
+        {
+            const ModelTree &mt = f_manager.t_feature[ti];
+            const int nv = (int)boost::num_vertices(mt);
+            oss << "  tree " << ti << "  nodes=" << nv
+                << "  edges=" << boost::num_edges(mt) << "\n";
+            for (int v = 0; v < nv; ++v)
+            {
+                const ModelNode &node = mt[v];
+                double wx = 0, wy = 0, wz = 0;
+                int anchor = -1;
+                if (node.estimated_depth > 0 && !node.tree_per_frame.empty())
+                {
+                    anchor = node.start_frame;
+                    const Vector3d &pt0 = node.tree_per_frame[0].point;
+                    Vector3d pts_imu = ric[0] * (node.estimated_depth * pt0.normalized()) + tic[0];
+                    Vector3d pts_w   = Rs[anchor] * pts_imu + Ps[anchor];
+                    wx = pts_w.x(); wy = pts_w.y(); wz = pts_w.z();
+                }
+                else if (!node.tree_per_frame.empty())
+                {
+                    const TreePerFrame &latest = node.tree_per_frame.back();
+                    anchor = latest.frame;
+                    Vector3d pts_imu = ric[0] * latest.point + tic[0];
+                    Vector3d pts_w   = Rs[anchor] * pts_imu + Ps[anchor];
+                    wx = pts_w.x(); wy = pts_w.y(); wz = pts_w.z();
+                }
+                oss << "    node id=" << node.feature_id
+                    << " anchor=" << anchor
+                    << " pos=(" << wx << ", " << wy << ", " << wz << ")\n";
+            }
+        }
+        logMessage(oss.str());
+    }
+
     ROS_DEBUG("%s", marginalization_flag ? "Non-keyframe" : "Keyframe");
     ROS_DEBUG("Solving %d", frame_count);
     ROS_DEBUG("number of feature: %d", f_manager.getFeatureCount());
