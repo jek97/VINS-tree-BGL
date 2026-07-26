@@ -95,6 +95,7 @@ rclcpp::Publisher<sensor_msgs::msg::PointCloud>::SharedPtr pub_keyframe_point;
 rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_extrinsic;
 rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub_tree_match;
 rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr pub_tree_match_info;
+rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub_skeleton_img;
 
 double old_header = 0;
 
@@ -273,6 +274,7 @@ class VinsNode : public rclcpp::Node, public std::enable_shared_from_this<VinsNo
 
                 pub_tree_match = this->create_publisher<sensor_msgs::msg::Image>("tree_match/image", 1000);
                 pub_tree_match_info = this->create_publisher<sensor_msgs::msg::CameraInfo>("tree_match/camera_info", 1000);
+                pub_skeleton_img = this->create_publisher<sensor_msgs::msg::Image>("/skeleton_img/image", 1000);
             }
 
             // launch processing threads
@@ -490,6 +492,33 @@ class VinsNode : public rclcpp::Node, public std::enable_shared_from_this<VinsNo
                             continue;
                         }
                         
+                        // publish greyscale image with raw segmentation masks
+                        {
+                            cv::Mat grey, vis;
+                            cv::cvtColor(color_image, grey, cv::COLOR_BGR2GRAY);
+                            cv::cvtColor(grey, vis, cv::COLOR_GRAY2BGR);
+                            static const cv::Scalar mask_colors[] = {
+                                {0,255,0}, {0,0,255}, {255,0,0},
+                                {0,255,255}, {255,0,255}, {255,255,0}
+                            };
+                            for (size_t mi = 0; mi < masks.size(); ++mi)
+                            {
+                                cv::Mat colored(vis.size(), CV_8UC3,
+                                    mask_colors[mi % (sizeof(mask_colors)/sizeof(mask_colors[0]))]);
+                                colored.copyTo(vis, masks[mi]);
+                            }
+                            std_msgs::msg::Header seg_header = ref_frame["tree_camera"].header;
+                            builtin_interfaces::msg::Time seg_stamp;
+                            seg_stamp.sec    = static_cast<int32_t>(time);
+                            seg_stamp.nanosec = static_cast<uint32_t>((time - seg_stamp.sec) * 1e9);
+                            seg_header.stamp = seg_stamp;
+                            seg_header.frame_id = "oakd_rgb_camera_optical_frame";
+                            cv::Mat vis_rgb;
+                            cv::cvtColor(vis, vis_rgb, cv::COLOR_BGR2RGB);
+                            auto seg_msg = cv_bridge::CvImage(seg_header, "bgr8", vis_rgb).toImageMsg();
+                            pub_skeleton_img->publish(*seg_msg);
+                        }
+
                         // pre process depth image
                         cv::Mat processed_depth_image;
                         processed_depth_image = preprocessDepthImage(depth_image, masks);
