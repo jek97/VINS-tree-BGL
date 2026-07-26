@@ -519,75 +519,49 @@ class VinsNode : public rclcpp::Node, public std::enable_shared_from_this<VinsNo
                             pub_skeleton_img->publish(*seg_msg);
                         }
 
-                        // pre process depth image
-                        cv::Mat processed_depth_image;
-                        processed_depth_image = preprocessDepthImage(depth_image, masks);
+                        // --- downstream pipeline disabled while DAG crash is investigated ---
+                        // // pre process depth image
+                        // cv::Mat processed_depth_image;
+                        // processed_depth_image = preprocessDepthImage(depth_image, masks);
 
-                        // horizontal clustering
-                        std::vector<cv::Mat> hclustered_masks;
-                        hclustered_masks = horizontalClustering(processed_depth_image, masks);
+                        // // horizontal clustering
+                        // std::vector<cv::Mat> hclustered_masks;
+                        // hclustered_masks = horizontalClustering(processed_depth_image, masks);
 
-                        
-                        // skeletonization
-                        ObservedForest forest;
-                        forest = skeletonize(hclustered_masks, processed_depth_image, color_image);
-                        
-                        // visualize skeletons
-                        cv::Mat color_skeletons;
-                        color_skeletons = draw_forest(color_image, hclustered_masks, forest);
-                        
-                        // publish skeleton visualization
-                        // image
-                        std_msgs::msg::Header header = ref_frame["tree_camera"].header;
-                        header.frame_id = "oakd_rgb_camera_optical_frame"; // TO MODIFY AFTER TF IS CORRECT
-                        builtin_interfaces::msg::Time stamp;
-                        stamp.sec  = static_cast<int32_t>(time);
-                        stamp.nanosec = static_cast<uint32_t>((time - stamp.sec) * 1e9);
-                        header.stamp = stamp;
-                        
-                        cv::Mat rgb_image;
-                        cv::cvtColor(color_skeletons, rgb_image, cv::COLOR_BGR2RGB);
-                        auto img_msg = cv_bridge::CvImage(
-                            header, "bgr8", rgb_image).toImageMsg();
-                        pub_color_skels->publish(*img_msg);
+                        // // skeletonization
+                        // ObservedForest forest;
+                        // forest = skeletonize(hclustered_masks, processed_depth_image, color_image);
 
-                        // camera info
-                        sensor_msgs::msg::CameraInfo cam_info = ref_frame["tree_camera"];
-                        cam_info.header.stamp = header.stamp;
-                        cam_info.header.frame_id = "oakd_rgb_camera_optical_frame"; // TO MODIFY AFTER TF IS CORRECT
+                        // // visualize skeletons
+                        // cv::Mat color_skeletons;
+                        // color_skeletons = draw_forest(color_image, hclustered_masks, forest);
 
-                        pub_color_skels_info->publish(cam_info);
-                        
-                        // debug
-                        ///// LOG /////
-                        std::ostringstream oss;
-                        oss << "=========================================================================\nVN forest at time " << std::setprecision(15) << time << std::endl;
-                        for(size_t i = 0; i < forest.size(); ++i){
-                            const auto& tree = forest[i];
-                            oss << "tree " << i << "\n--------------------------------------------------------------------------" << std::endl;
-                            for(auto v : boost::make_iterator_range(boost::vertices(tree))){
-                                const auto& nd = tree[v];
-                                oss << "    node " << nd.ex_id
-                                    << " pos " << nd.x << " " << nd.y << " " << nd.z;
-                                oss << " parent ";
-                                for(auto e : boost::make_iterator_range(boost::in_edges(v, tree)))
-                                    oss << tree[boost::source(e, tree)].ex_id << " ";
-                                oss << "sons ";
-                                for(auto e : boost::make_iterator_range(boost::out_edges(v, tree)))
-                                    oss << tree[boost::target(e, tree)].ex_id << " ";
-                                oss << "fd ";
-                                for(const auto& fdi : nd.fd_brief)
-                                    oss << static_cast<int>(fdi) << " ";
-                                oss << std::endl;
-                            }
-                        }
-                        logMessage(oss.str());
-                        ///// LOG /////
+                        // // publish skeleton visualization
+                        // std_msgs::msg::Header header = ref_frame["tree_camera"].header;
+                        // header.frame_id = "oakd_rgb_camera_optical_frame";
+                        // builtin_interfaces::msg::Time stamp;
+                        // stamp.sec  = static_cast<int32_t>(time);
+                        // stamp.nanosec = static_cast<uint32_t>((time - stamp.sec) * 1e9);
+                        // header.stamp = stamp;
+                        // cv::Mat rgb_image;
+                        // cv::cvtColor(color_skeletons, rgb_image, cv::COLOR_BGR2RGB);
+                        // auto img_msg = cv_bridge::CvImage(header, "bgr8", rgb_image).toImageMsg();
+                        // pub_color_skels->publish(*img_msg);
+                        // sensor_msgs::msg::CameraInfo cam_info = ref_frame["tree_camera"];
+                        // cam_info.header.stamp = header.stamp;
+                        // cam_info.header.frame_id = "oakd_rgb_camera_optical_frame";
+                        // pub_color_skels_info->publish(cam_info);
 
-                        // load forest
+                        // ///// LOG /////
+                        // std::ostringstream oss;
+                        // oss << "=========================================================================\nVN forest at time " << std::setprecision(15) << time << std::endl;
+                        // for(size_t i = 0; i < forest.size(); ++i){ ... }
+                        // logMessage(oss.str());
+                        // ///// LOG /////
+
+                        // load empty forest so estimator keeps running
                         std::pair<bool, ObservedForest> out_forest;
-                        out_forest.first = true;
-                        out_forest.second = forest;
+                        out_forest.first = false;
                         estimator.inputForest(time, out_forest);
                     }
                 }
